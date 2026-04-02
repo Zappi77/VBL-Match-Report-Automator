@@ -1,0 +1,80 @@
+{
+  "entities": {
+    "Team": {
+      "title": "Team",
+      "description": "A volleyball team in the VBL Sparda 2. Liga Pro",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the team" },
+        "teamId": { "type": "string", "description": "VBL internal team ID (9 digits)" },
+        "logoUrl": { "type": "string", "description": "URL to the team's logo" }
+      },
+      "required": ["name", "teamId"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A specific match in the VBL Sparda 2. Liga Pro",
+      "type": "object",
+      "properties": {
+        "matchNumber": { "type": "string", "description": "VBL match number (e.g., 3137)" },
+        "matchId": { "type": "string", "description": "VBL internal match ID (9 digits)" },
+        "homeTeam": { "type": "string", "description": "Name of the home team" },
+        "homeTeamId": { "type": "string", "description": "VBL ID of the home team" },
+        "awayTeam": { "type": "string", "description": "Name of the away team" },
+        "awayTeamId": { "type": "string", "description": "VBL ID of the away team" },
+        "venueName": { "type": "string", "description": "Name of the venue" },
+        "locationId": { "type": "string", "description": "VBL ID of the location" },
+        "date": { "type": "string", "description": "Date of the match (DD.MM.YYYY)" },
+        "time": { "type": "string", "description": "Time of the match (HH:MM)" },
+        "weekday": { "type": "string", "description": "Weekday of the match" },
+        "spectators": { "type": "string", "description": "Number of spectators" },
+        "matchDuration": { "type": "string", "description": "Duration of the match" },
+        "setPoints": { "type": "string", "description": "Points per set" },
+        "resultSets": { "type": "string", "description": "Final result in sets" },
+        "samsScoreUuid": { "type": "string", "description": "UUID for SAMS score sheet" },
+        "youtubeUrl": { "type": "string", "description": "Link to the YouTube Re-Live" }
+      },
+      "required": ["matchNumber", "matchId", "homeTeam", "awayTeam"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A player in the VBL Sparda 2. Liga Pro",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the player" },
+        "userId": { "type": "string", "description": "VBL internal user ID" },
+        "teamId": { "type": "string", "description": "VBL ID of the team the player belongs to" }
+      },
+      "required": ["name", "userId", "teamId"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "A generated match report",
+      "type": "object",
+      "properties": {
+        "matchNumber": { "type": "string", "description": "VBL match number" },
+        "content": { "type": "string", "description": "Markdown content of the report" },
+        "generatedAt": { "type": "string", "description": "Timestamp when the report was generated" }
+      },
+      "required": ["matchNumber", "content"]
+    }
+  },
+  "firestore": {
+    "/teams/{teamId}": {
+      "schema": "Team",
+      "description": "Collection of teams"
+    },
+    "/matches/{matchNumber}": {
+      "schema": "Match",
+      "description": "Collection of matches"
+    },
+    "/players/{playerName}": {
+      "schema": "Player",
+      "description": "Collection of players"
+    },
+    "/reports/{matchNumber}": {
+      "schema": "Report",
+      "description": "Cached reports"
+    }
+  }
+}
