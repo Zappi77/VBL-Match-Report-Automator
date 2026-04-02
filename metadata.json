@@ -1,0 +1,5 @@
+{
+  "name": "VBL Match Report Automator",
+  "description": "Automatisierte Erstellung von Spielberichten für die Sparda 2. Liga Pro (Saison 2025/26) basierend auf der Spielnummer.",
+  "requestFramePermissions": []
+}

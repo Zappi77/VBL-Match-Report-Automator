@@ -1,0 +1,121 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: teams
+    // Document ID: teamId (VBL ID)
+    // Fields:
+    //   - name: string (required)
+    //   - teamId: string (required)
+    //   - logoUrl: string (optional)
+    //
+    // Collection: matches
+    // Document ID: matchNumber (VBL Number)
+    // Fields:
+    //   - matchNumber: string (required)
+    //   - matchId: string (required)
+    //   - homeTeam: string (required)
+    //   - homeTeamId: string (required)
+    //   - awayTeam: string (required)
+    //   - awayTeamId: string (required)
+    //   - venueName: string (required)
+    //   - locationId: string (required)
+    //   - date: string (optional)
+    //   - time: string (optional)
+    //   - weekday: string (optional)
+    //   - spectators: string (optional)
+    //   - matchDuration: string (optional)
+    //   - setPoints: string (optional)
+    //   - resultSets: string (optional)
+    //   - samsScoreUuid: string (optional)
+    //   - youtubeUrl: string (optional)
+    //
+    // Collection: players
+    // Document ID: playerName (VBL Name)
+    // Fields:
+    //   - name: string (required)
+    //   - userId: string (required)
+    //   - teamId: string (required)
+    //
+    // Collection: reports
+    // Document ID: matchNumber (VBL Number)
+    // Fields:
+    //   - matchNumber: string (required)
+    //   - content: string (required)
+    //   - generatedAt: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == "knud.zabrocki@gmail.com");
+    }
+
+    function isValidTeam(data) {
+      return data.keys().hasAll(['name', 'teamId']) &&
+             data.name is string && data.name.size() < 200 &&
+             data.teamId is string && data.teamId.size() < 50;
+    }
+
+    function isValidMatch(data) {
+      return data.keys().hasAll(['matchNumber', 'matchId', 'homeTeam', 'homeTeamId', 'awayTeam', 'awayTeamId', 'venueName', 'locationId']) &&
+             data.matchNumber is string && data.matchNumber.size() > 0 && data.matchNumber.size() < 50 &&
+             data.matchId is string && data.matchId.size() < 100 &&
+             data.homeTeam is string && data.homeTeam.size() < 200 &&
+             data.awayTeam is string && data.awayTeam.size() < 200;
+    }
+
+    function isValidPlayer(data) {
+      return data.keys().hasAll(['name', 'userId', 'teamId']) &&
+             data.name is string && data.name.size() < 200 &&
+             data.userId is string && data.userId.size() < 50 &&
+             data.teamId is string && data.teamId.size() < 50;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['matchNumber', 'content', 'generatedAt']) &&
+             data.matchNumber is string && data.matchNumber.size() > 0 && data.matchNumber.size() < 10 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 100000 &&
+             data.generatedAt is string && data.generatedAt.size() > 0 && data.generatedAt.size() < 50;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /teams/{teamId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidTeam(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchNumber} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidMatch(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /players/{playerName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidPlayer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /reports/{matchNumber} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidReport(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}
