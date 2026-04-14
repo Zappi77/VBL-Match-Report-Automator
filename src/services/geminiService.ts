@@ -49,6 +49,9 @@ const TEAM_URL = (teamId: string) =>
 const PLAYER_URL = (teamId: string, userId: string) =>
   `https://www.volleyball-bundesliga.de/popup/teamMember/teamMemberDetails.xhtml?teamId=${teamId}&userId=${userId}`;
 
+const VBL_TICKER_URL = (uuid: string) =>
+  `https://www.vbl-ticker.de/detail/${uuid}`;
+
 // ─────────────────────────────────────────────
 // Hilfsfunktionen
 // ─────────────────────────────────────────────
@@ -67,13 +70,13 @@ const isValidMatchId = (val: unknown, matchNumber: string): boolean => {
     console.warn(`Rejected matchId ${s} because it is a known teamId.`);
     return false;
   }
-  // matchId muss mindestens 8 Stellen haben, darf nicht die Spielnummer sein
-  // und sollte idealerweise mit 777 oder 776 beginnen (VBL Standard)
-  const validFormat = s.length >= 8 && s !== matchNumber && /^\d+$/.test(s) && (s.startsWith("777") || s.startsWith("776"));
+  // matchId muss mindestens 7 Stellen haben, darf nicht die Spielnummer sein
+  // und sollte numerisch sein. Wir lockern die Prüfung auf den Anfang (777/776),
+  // da es Ausnahmen geben könnte.
+  const validFormat = s.length >= 7 && s !== matchNumber && /^\d+$/.test(s);
   
   // Halluzinations-Check: Wenn die matchId auf die Spielnummer endet, ist sie SEHR verdächtig
-  // (VBL matchIds sind meist fortlaufend, aber enden selten exakt auf die Spielnummer)
-  if (validFormat && s.endsWith(matchNumber)) {
+  if (validFormat && s.endsWith(matchNumber) && s.length < 10) {
     console.warn(`Suspicious matchId ${s} ends with matchNumber ${matchNumber}. Rejecting to avoid hallucination.`);
     return false;
   }
@@ -113,6 +116,64 @@ const extractUserId = (val: unknown): string => {
 // ─────────────────────────────────────────────
 // Firestore Fehlerbehandlung
 // ─────────────────────────────────────────────
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  let message = error instanceof Error ? error.message : String(error);
+  
+  // Spezielle Behandlung für Offline-Fehler
+  if (message.includes("client is offline")) {
+    message = "Verbindung zu Firestore fehlgeschlagen (Client ist offline). Bitte prüfe deine Internetverbindung oder lade die Seite neu.";
+  }
+
+  const errInfo: FirestoreErrorInfo = {
+    error: message,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 function logFirestoreError(error: unknown, operation: string, path: string) {
   console.error(`Firestore [${operation}] at ${path}:`, error);
 }
@@ -146,7 +207,7 @@ async function resolveMatchId(
     
     ANWEISUNG:
     1. Suche in den Tabellen nach der Spielnummer ${matchNumber}.
-    2. Die matchId steht im Link zum Info-Icon "i" oder zur Detailseite (matchDetails.xhtml?matchId=XXXXXXXXX).
+    2. Die matchId steht im Link zum Info-Icon "i" oder zur Detailseite (matchDetails.xhtml?matchId=XXXXXXXXX) oder im Attribut id="match_XXXXXXXXX".
     3. Die matchId ist eine 9-stellige Zahl (beginnt meist mit 777).
     
     WICHTIG:
@@ -159,13 +220,25 @@ async function resolveMatchId(
 
   try {
     onStatusUpdate?.("Analysiere VBL-Seiten parallel...");
-    const response = await ai.models.generateContent({
-      model: MODEL_FAST,
-      contents: prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-      },
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: MODEL_FAST,
+        contents: prompt,
+        config: {
+          tools: [{ urlContext: {} }],
+        },
+      });
+    } catch (e) {
+      console.warn("MODEL_FAST failed for resolveMatchId, trying MODEL_SMART...", e);
+      response = await ai.models.generateContent({
+        model: MODEL_SMART,
+        contents: prompt,
+        config: {
+          tools: [{ urlContext: {} }],
+        },
+      });
+    }
 
     const text = (response.text || "").trim();
     const match = text.match(/\b(\d{8,10})\b/);
@@ -211,6 +284,7 @@ async function resolveMatchId(
 // ─────────────────────────────────────────────
 async function getCachedReport(matchNumber: string): Promise<string | null> {
   if (matchCache[matchNumber]) return matchCache[matchNumber];
+  const path = `reports/${matchNumber}`;
   try {
     const snap = await getDoc(doc(db, "reports", matchNumber));
     if (snap.exists()) {
@@ -219,7 +293,7 @@ async function getCachedReport(matchNumber: string): Promise<string | null> {
       return content;
     }
   } catch (e) {
-    logFirestoreError(e, "GET", `reports/${matchNumber}`);
+    handleFirestoreError(e, OperationType.GET, path);
   }
   return null;
 }
@@ -228,11 +302,16 @@ export async function saveReport(matchNumber: string, content: string) {
   matchCache[matchNumber] = content;
   if (!auth.currentUser) return;
   
-  await setDoc(doc(db, "reports", matchNumber), {
-    matchNumber,
-    content,
-    generatedAt: new Date().toISOString(),
-  });
+  const path = `reports/${matchNumber}`;
+  try {
+    await setDoc(doc(db, "reports", matchNumber), {
+      matchNumber,
+      content,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    handleFirestoreError(e, OperationType.WRITE, path);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -242,6 +321,7 @@ async function getMatchData(
   matchNumber: string
 ): Promise<Partial<MatchReference>> {
   const staticData: Partial<MatchReference> = SEASON_MATCHES[matchNumber] || {};
+  const path = `matches/${matchNumber}`;
   try {
     const snap = await getDoc(doc(db, "matches", matchNumber));
     if (snap.exists()) {
@@ -265,7 +345,7 @@ async function getMatchData(
       return merged;
     }
   } catch (e) {
-    logFirestoreError(e, "GET", `matches/${matchNumber}`);
+    handleFirestoreError(e, OperationType.GET, path);
   }
   return staticData;
 }
@@ -285,7 +365,10 @@ const matchSchema = {
     homeTeamId:     { type: Type.STRING },
     awayTeamId:     { type: Type.STRING },
     resultSets:     { type: Type.STRING },
-    totalPoints:    { type: Type.STRING },
+    totalPoints:    { 
+      type: Type.STRING, 
+      description: "Das Verhältnis der Punkte (Heim:Gast), z.B. '75:58'. NICHT die Summe aller Punkte." 
+    },
     setPoints:      { type: Type.STRING },
     matchDuration:  { type: Type.STRING },
     matchId:        { type: Type.STRING },
@@ -315,7 +398,9 @@ async function extractMatchData(
   matchId: string,
   knownData: Partial<MatchReference>,
   forceRefresh: boolean,
-  onStatusUpdate?: (s: string) => void
+  onStatusUpdate?: (s: string) => void,
+  manualMatchId?: string,
+  selectedTeamId?: string
 ): Promise<Record<string, unknown>> {
   const mainUrl = VBL_MATCH_URL(matchId);
   onStatusUpdate?.(`Rufe Spielseite auf: ${mainUrl}`);
@@ -325,29 +410,55 @@ async function extractMatchData(
     SPIELNUMMER: ${matchNumber}
     MATCH-ID: ${matchId} (9-stellig – NICHT die Spielnummer!)
     HAUPT-URL: ${mainUrl}
+    ${selectedTeamId ? `ERWARTETES TEAM (ID): ${selectedTeamId}` : ""}
     
     BEKANNTE DATEN AUS DATENBANK:
     ${JSON.stringify(knownData, null, 2)}
-    ${forceRefresh ? "\nACHTUNG: Force-Refresh! Ignoriere DB-Werte für Zuschauer/MVPs – nur Webseite zählt." : ""}
+    ${forceRefresh || manualMatchId ? "\nACHTUNG: Aktualisierung erzwungen! Priorisiere die Daten von der Webseite gegenüber den oben genannten Datenbank-Werten." : ""}
     
-    AUFGABE – Extrahiere von der Haupt-URL:
+    AUFGABE: Extrahiere die Spieldaten für Spiel #${matchNumber}.
     
-    WICHTIG: Nutze das Tool 'urlContext' um die Seite ${mainUrl} zu lesen.
-    Falls die Seite nicht direkt geladen werden kann, nutze 'googleSearch' um nach "VBL Spiel ${matchNumber} ${knownData.homeTeam || ""} vs ${knownData.awayTeam || ""}" zu suchen.
+    WICHTIG: Du MUSST das Tool 'googleSearch' aufrufen, um die Seite ${mainUrl} zu lesen.
     
-    1. SPIELERGEBNIS (Zeile 2):
+    ANLEITUNG:
+    1. Rufe 'googleSearch' für ${mainUrl} auf.
+    2. Suche im Text nach dem Ergebnis (Sätze, Punkte), den MVPs und der Spieldauer.
+    3. Identifiziere Heim- und Gastteam (Reihenfolge auf der Seite beachten).
+    4. Antworte ausschließlich mit validem JSON gemäß Schema.
+    
+    WICHTIG: Halluziniere KEINE Daten. Wenn ein Feld nicht auf der Seite steht, lasse es leer ("").
+    
+    NUTZE DAS 'logs' FELD:
+    Dokumentiere im 'logs' Array kurz deine Schritte, z.B.:
+    - "Lade Seite ${mainUrl}..."
+    - "Gefunden: Heimteam=X, Gastteam=Y"
+    - "Extrahiere Ergebnis: 3:1..."
+    Dies hilft dem Nutzer zu verstehen, woher die Daten kommen.
+    
+    1. DATUM & UHRZEIT (Zeile 1):
+       - Suche nach dem Datum (z.B. 28.03.2026), der Uhrzeit (z.B. 19:00) und dem Wochentag (z.B. Samstag).
+       - Diese stehen oft ganz oben auf der Seite oder direkt unter der Hauptüberschrift (H2).
+       - Suche nach Mustern wie "Wochentag, DD.MM.YYYY um HH:MM Uhr".
+       - Format: date="DD.MM.YYYY", time="HH:MM", weekday="Wochentag"
+       - WICHTIG: Falls das Jahr fehlt, ergänze "2026" (Saison 2025/26).
+    
+    2. SPIELERGEBNIS (Zeile 2):
        - Heimteam, Gastteam, Satzstand (z.B. 3:0), Gesamtpunkte (z.B. 75:58), Satzpunkte (z.B. 25:18, 25:19, 25:21)
-       - WICHTIG: Die Gesamtpunkte (totalPoints) sind die Summe aller Punkte beider Teams über alle Sätze hinweg.
-       - Falls die Teams nicht explizit genannt werden, nutze Google Search.
+       - WICHTIG: Die Reihenfolge auf der VBL-Seite ist IMMER [Heimteam] vs. [Gastteam]. 
+       - Falls ein "erwartetes Team" (${selectedTeamId}) angegeben ist, ordne es korrekt als Heim- ODER Gastteam zu, je nachdem an welcher Position es auf der Seite steht. Setze es NICHT automatisch als Heimteam.
+       - WICHTIG: Die Gesamtpunkte (totalPoints) sind das Verhältnis der Punkte (Heim:Gast), z.B. 75:58. NICHT die Summe.
+       - HINWEIS: Die Teamnamen stehen oft in der Hauptüberschrift (H2) der Seite oder in den Links zu den Mannschaftsseiten.
+       - HINWEIS: Nutze die CSS-Klasse 'samsMatchSubResult' im HTML um die Satzpunkte EXAKT zu finden. Das Endergebnis steht oft in 'samsMatchResult'.
+       - ${manualMatchId || selectedTeamId ? "Die Teams müssen auf der Seite gefunden werden. Verifiziere, dass eines der Teams zum erwarteten Team passt." : "Falls die Teams nicht explizit genannt werden, nutze Google Search."}
     
     2. SPIELDAUER (Zeile 3):
-       - HTML: <div class="samsContentBoxHeader">Statistiken</div>
+       - HTML: Suche nach dem Text "Spieldauer:" in einer Tabelle.
        - Format: "68 Min. (22, 22, 24)"
-       - WICHTIG: Lies die Zahlen EXAKT aus der Tabelle unter "Statistiken".
+       - WICHTIG: Konvertiere "Minuten" zu "Min.".
     
     3. ZUSCHAUER (Zeile 4):
-       - Selbe Statistiken-Box
-       - NUR tatsächlich Anwesende, NICHT Kapazität
+       - HTML: Suche nach dem Text "Zuschauer:".
+       - NUR tatsächlich Anwesende, NICHT Kapazität.
     
     4. SPIELORT + locationId (Zeile 5):
        - Name der Halle (z.B. "Sporthalle Berg Fidel")
@@ -358,9 +469,10 @@ async function extractMatchData(
        - Link DIREKT unter der Spieldauer-Zeile (meist ein PDF-Icon oder Link "Spielbericht")
        - Format: https://distributor.sams-score.de/scoresheet/pdf/{UUID}/{matchNumber}
        - Extrahiere NUR die UUID (36 Zeichen, Hexadezimal mit Bindestrichen)
+       - WICHTIG: Diese UUID ist essenziell für den Spielbericht und den VBL-Ticker.
     
     6. MVPs (Zeilen 8+9):
-       - HTML: <div class="samsContentBoxHeader">Most Valuable Player</div>
+       - HTML: Suche nach der CSS-Klasse 'samsOutputMvpPlayerName'.
        - Name UND userId (aus Link: teamMemberDetails.xhtml?teamId=X&userId=Y)
        - WICHTIG: Nimm NUR die MVPs dieses Spiels (${matchNumber}). Ignoriere MVPs von anderen Spielen ("Nächstes Spiel" / "Letztes Spiel").
        - Die userId ist meist 5- bis 7-stellig (z.B. 123456). Sie beginnt NICHT mit 777 (das sind matchIds).
@@ -387,7 +499,7 @@ async function extractMatchData(
     - Falls ein Link nicht eindeutig ist, nutze Google Search zur Verifizierung.
     - Wenn UUID nicht gefunden: leerer String (kein Platzhalter)
     - Bei userId: NUR die Zahl, keine URL
-    - Logs: Schreibe für jeden gefundenen Wert einen Eintrag (z.B. "Zuschauer gefunden: 150")
+    - Logs: Schreibe für jeden gefundenen Wert einen Eintrag (z.B. "Zuschauer gefunden: 150", "Datum gefunden: 28.03.2026")
     - Falls Daten auf der Seite fehlen (z.B. Spiel noch nicht stattgefunden), nutze leere Strings.
     
     REFERENZDATEN:
@@ -397,51 +509,134 @@ async function extractMatchData(
   `;
 
   console.log("Extracting data for matchId:", matchId, "URL:", mainUrl);
-  onStatusUpdate?.(`Analysiere Spieldaten für #${matchNumber}...`);
+  if (manualMatchId) {
+    onStatusUpdate?.(`Direktzugriff auf Spielseite #${matchNumber} (ID: ${matchId})...`);
+    onStatusUpdate?.("KI-Suche deaktiviert – Scrappe ausschließlich die Zielseite.");
+  } else {
+    onStatusUpdate?.(`Analysiere Spieldaten für #${matchNumber}...`);
+  }
 
-  const stream = await ai.models.generateContentStream({
-    model: MODEL_FAST,
-    contents: prompt,
-    config: {
-      tools: [{ urlContext: {} }, { googleSearch: {} }],
-      toolConfig: { includeServerSideToolInvocations: true },
-      responseMimeType: "application/json",
-      responseSchema: matchSchema,
-      systemInstruction:
-        "Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Nutze die Tools (urlContext, googleSearch) um die Daten zu verifizieren.",
-    },
-  });
+  let stream;
+  try {
+    const modelToUse = manualMatchId ? MODEL_SMART : MODEL_FAST;
+    
+    stream = await ai.models.generateContentStream({
+      model: modelToUse,
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        toolConfig: { includeServerSideToolInvocations: true },
+        responseMimeType: "application/json",
+        responseSchema: matchSchema,
+        systemInstruction:
+          manualMatchId 
+            ? `Du bist ein präziser Daten-Extraktor. 
+               WICHTIG: Du MUSST das Tool 'googleSearch' aufrufen, um die Seite ${mainUrl} zu lesen. 
+               Extrahiere die Daten EXAKT so, wie sie auf der Seite stehen. 
+               Halluziniere KEINE Daten. Wenn ein Feld nicht auf der Seite zu finden ist, lasse es leer ("").
+               Antworte ausschließlich mit validem JSON gemäß Schema.`
+            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. 
+               Nutze das Tool 'googleSearch' um die Daten zu verifizieren. 
+               Halluziniere KEINE Daten. Wenn ein Feld nicht gefunden werden kann, lasse es leer ("").
+               Antworte ausschließlich mit validem JSON gemäß Schema.`,
+      },
+    });
+  } catch (e: any) {
+    if (e.message?.includes("404") || e.message?.includes("NOT_FOUND") || e.message?.includes("Browse tool")) {
+      console.warn("Primary models or tools not supported, falling back to gemini-3-flash-preview...", e);
+      onStatusUpdate?.("⚠️ Standard-Modelle oder Tools nicht verfügbar. Nutze Ausweich-Modell...");
+      stream = await ai.models.generateContentStream({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          toolConfig: { includeServerSideToolInvocations: true },
+          responseMimeType: "application/json",
+          responseSchema: matchSchema,
+          systemInstruction: manualMatchId 
+            ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels googleSearch. Antworte ausschließlich mit validem JSON gemäß Schema.`
+            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema.`,
+        },
+      });
+    } else {
+      console.warn("MODEL_FAST failed to start stream, trying MODEL_SMART...", e);
+      onStatusUpdate?.("⚠️ Verbindung zum Standard-Modell unterbrochen. Nutze Pro-Modell...");
+      stream = await ai.models.generateContentStream({
+        model: MODEL_SMART,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          toolConfig: { includeServerSideToolInvocations: true },
+          responseMimeType: "application/json",
+          responseSchema: matchSchema,
+          systemInstruction:
+            manualMatchId 
+              ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels googleSearch. Antworte ausschließlich mit validem JSON gemäß Schema.`
+              : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Nutze das Tool 'googleSearch' um die Daten zu verifizieren. WICHTIG: Erzeuge am Ende IMMER das vollständige JSON-Objekt, auch wenn Daten fehlen.`,
+        },
+      });
+    }
+  }
 
   let fullText = "";
   let lastLogCount = 0;
 
-  for await (const chunk of stream) {
-    if (chunk.candidates?.[0]?.finishReason === "SAFETY") {
-      throw new Error("KI-Sicherheitsblockade.");
-    }
-    if (chunk.text) fullText += chunk.text;
-
-    // Live-Logs aus Partial-JSON
-    try {
-      const logsMatch = fullText.match(/"logs":\s*\[([\s\S]*?)\]/);
-      if (logsMatch) {
-        const logs = logsMatch[1]
-          .split(",")
-          .map((s) => s.trim().replace(/^"|"$/g, ""))
-          .filter((s) => s.length > 2);
-        for (let i = lastLogCount; i < logs.length; i++) {
-          onStatusUpdate?.(logs[i]);
-        }
-        lastLogCount = logs.length;
+  try {
+    for await (const chunk of stream) {
+      if (chunk.candidates?.[0]?.finishReason === "SAFETY") {
+        throw new Error("KI-Sicherheitsblockade.");
       }
-    } catch {
-      // Partial-JSON Fehler ignorieren
+      if (chunk.text) fullText += chunk.text;
+
+      // Live-Logs aus Partial-JSON
+      try {
+        const logsMatch = fullText.match(/"logs":\s*\[([\s\S]*?)\]/);
+        if (logsMatch) {
+          const logs = logsMatch[1]
+            .split(",")
+            .map((s) => s.trim().replace(/^"|"$/g, ""))
+            .filter((s) => s.length > 2);
+          for (let i = lastLogCount; i < logs.length; i++) {
+            onStatusUpdate?.(logs[i]);
+          }
+          lastLogCount = logs.length;
+        }
+      } catch {
+        // Partial-JSON Fehler ignorieren
+      }
+    }
+  } catch (e: any) {
+    if (e.message?.includes("SAFETY")) throw e;
+    console.warn("Stream processing failed, retrying with MODEL_SMART...", e);
+    onStatusUpdate?.("⚠️ Datenextraktion verzögert. Starte zweiten Versuch mit Pro-Modell...");
+    
+    // Reset and retry with Pro
+    fullText = "";
+    lastLogCount = 0;
+    const proStream = await ai.models.generateContentStream({
+      model: MODEL_SMART,
+      contents: prompt,
+      config: {
+        tools: manualMatchId ? [{ urlContext: {} }] : [{ urlContext: {} }, { googleSearch: {} }],
+        toolConfig: { includeServerSideToolInvocations: true },
+        responseMimeType: "application/json",
+        responseSchema: matchSchema,
+        systemInstruction:
+          manualMatchId 
+            ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels urlContext. Antworte ausschließlich mit validem JSON gemäß Schema.`
+            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Nutze die Tools (urlContext, googleSearch) um die Daten zu verifizieren. WICHTIG: Erzeuge am Ende IMMER das vollständige JSON-Objekt, auch wenn Daten fehlen.`,
+      },
+    });
+    
+    for await (const chunk of proStream) {
+      if (chunk.text) fullText += chunk.text;
     }
   }
 
   if (!fullText.trim()) {
     console.error("Gemini returned empty response for matchId:", matchId);
-    throw new Error("Keine Antwort von Gemini.");
+    onStatusUpdate?.("❌ KI hat keine Daten geliefert. Bitte Seite manuell prüfen.");
+    throw new Error("Keine Antwort von Gemini. Möglicherweise konnte die Seite nicht gelesen werden.");
   }
 
   console.log("Gemini Raw Response (Match Data):", fullText);
@@ -454,16 +649,49 @@ async function extractMatchData(
       ? fullText.substring(first, last + 1)
       : fullText;
 
-  return JSON.parse(jsonStr);
+  const data = JSON.parse(jsonStr);
+
+  // Gesamtpunkte (totalPoints) validieren/berechnen falls nötig
+  // Wir wollen "Heim:Gast" (z.B. 75:58)
+  if (data.setPoints && (!data.totalPoints || !String(data.totalPoints).includes(":"))) {
+    try {
+      const sets = String(data.setPoints).match(/\d+:\d+/g);
+      if (sets) {
+        let totalHome = 0;
+        let totalAway = 0;
+        sets.forEach((s: string) => {
+          const [h, a] = s.split(":").map(Number);
+          if (!isNaN(h) && !isNaN(a)) {
+            totalHome += h;
+            totalAway += a;
+          }
+        });
+        if (totalHome > 0 || totalAway > 0) {
+          data.totalPoints = `${totalHome}:${totalAway}`;
+          onStatusUpdate?.(`Gesamtpunkte berechnet: ${data.totalPoints}`);
+        }
+      }
+    } catch (e) {
+      console.error("Fehler bei der Berechnung der Gesamtpunkte:", e);
+    }
+  }
+
+  return data;
 }
 
 // ─────────────────────────────────────────────
 // Einzelnen Eintrag löschen
 // ─────────────────────────────────────────────
 export async function deleteMatchEntry(matchNumber: string): Promise<void> {
-  if (!auth.currentUser) throw new Error("Nicht autorisiert.");
-  await deleteDoc(doc(db, "matches", matchNumber));
-  await deleteDoc(doc(db, "reports", matchNumber));
+  if (!auth.currentUser) throw new Error("Nicht authentifiziert.");
+  const path = `matches/${matchNumber}`;
+  try {
+    await deleteDoc(doc(db, "matches", matchNumber));
+    await deleteDoc(doc(db, "reports", matchNumber));
+    delete matchCache[matchNumber];
+  } catch (e) {
+    handleFirestoreError(e, OperationType.DELETE, path);
+  }
 }
 export function buildReport(
   data: Record<string, unknown>,
@@ -491,6 +719,10 @@ export function buildReport(
       ? SAMS_URL(String(data.samsScoreUuid), matchNumber)
       : "#";
 
+  const tickerUrl = isUUID(data.samsScoreUuid)
+    ? VBL_TICKER_URL(String(data.samsScoreUuid))
+    : "#";
+
   const setPointsFormatted = data.setPoints
     ? String(data.setPoints).trim().startsWith("(")
       ? String(data.setPoints).trim()
@@ -505,6 +737,7 @@ export function buildReport(
     `Spielort: [${data.venueName || "Unbekannt"}](${locationUrl})`,
     `[Offizieller Spielbericht (VBL)](${samsUrl})`,
     `[Offizielle Spielstatistik (VBL)](${STATS_URL(matchNumber)})`,
+    `[VBL-Ticker](${tickerUrl})`,
     `MVP [${data.homeTeam || "Heim"}](${homeTeamUrl}): [${data.mvpHomeName || "Unbekannt"}](${mvpHomeUrl})`,
     `MVP [${data.awayTeam || "Gast"}](${awayTeamUrl}): [${data.mvpAwayName || "Unbekannt"}](${mvpAwayUrl})`,
     `[Re-Live DYN Volleyball YouTube (kostenfrei)](${data.youtubeUrl || YOUTUBE_PLAYLIST_URL})`,
@@ -521,7 +754,10 @@ export async function fetchMatchDataFull(
   onStatusUpdate?: (status: string) => void,
   forceRefresh = false,
   selectedTeamId?: string,
-  manualMatchId?: string
+  manualMatchId?: string,
+  manualDate?: string,
+  manualTime?: string,
+  manualWeekday?: string
 ): Promise<MatchReference> {
   // Eingabe validieren
   if (!matchNumber || isNaN(Number(matchNumber))) {
@@ -580,18 +816,27 @@ export async function fetchMatchDataFull(
   // Wir prüfen, ob wir bereits ein Ergebnis (resultSets) haben.
   const isDataComplete = !isNA(knownData.resultSets) && !isNA(knownData.setPoints);
   
-  if (!forceRefresh && isDataComplete) {
+  // Wenn eine manuelle Match-ID angegeben wurde, die von der gespeicherten abweicht, erzwingen wir ein Refresh
+  const isDifferentMatchId = manualMatchId && knownData.matchId && String(manualMatchId) !== String(knownData.matchId);
+  const shouldSkipExtraction = !forceRefresh && !manualMatchId && isDataComplete;
+
+  if (shouldSkipExtraction) {
     onStatusUpdate?.("Daten bereits in Master-Datenbank vorhanden. Überspringe KI-Extraktion.");
     rawData = { ...knownData, fromDb: true };
   } else {
+    if (manualMatchId) {
+      onStatusUpdate?.(isDifferentMatchId ? "Manuelle Match-ID weicht von Datenbank ab – erzwinge Neu-Extraktion..." : "Manuelle Match-ID angegeben – starte Extraktion...");
+    }
     onStatusUpdate?.("Extrahiere Spieldaten...");
     try {
       rawData = await extractMatchData(
         matchNumber,
         String(knownData.matchId),
         knownData,
-        forceRefresh,
-        onStatusUpdate
+        forceRefresh || !!manualMatchId,
+        onStatusUpdate,
+        manualMatchId,
+        selectedTeamId
       );
     } catch (e) {
       console.error("extractMatchData failed:", e);
@@ -615,7 +860,8 @@ export async function fetchMatchDataFull(
   }
 
   // Bei normalem Modus: DB-Werte bevorzugen (falls nicht N/A)
-  if (!forceRefresh) {
+  // Wenn forceRefresh ODER manualMatchId aktiv ist, nehmen wir die neuen Daten
+  if (!forceRefresh && !manualMatchId) {
     let hasDbValues = false;
     const prefer = (field: keyof MatchReference) => {
       if (!isNA(knownData[field])) {
@@ -687,6 +933,11 @@ export async function fetchMatchDataFull(
     rawData.locationId = KNOWN_LOCATIONS[String(rawData.venueName)] || "";
   }
 
+  // Manuelle Overrides (Datum/Uhrzeit)
+  if (manualDate) rawData.date = manualDate;
+  if (manualTime) rawData.time = manualTime;
+  if (manualWeekday) rawData.weekday = manualWeekday;
+
   return rawData as MatchReference;
 }
 
@@ -718,27 +969,39 @@ export async function saveMatchData(
     clean[f] = isNA(val) ? "" : val;
   });
 
-  await setDoc(
-    doc(db, "matches", matchNumber),
-    { ...clean, updatedAt: new Date().toISOString() },
-    { merge: true }
-  );
+  // Sicherstellen, dass die Spielnummer aus dem Argument übernommen wird
+  clean.matchNumber = matchNumber;
+
+  console.log(`[Firestore] Saving match #${matchNumber} to path matches/${matchNumber}`, clean);
+
+  const matchPath = `matches/${matchNumber}`;
+  try {
+    await setDoc(
+      doc(db, "matches", matchNumber),
+      { ...clean, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (e) {
+    handleFirestoreError(e, OperationType.WRITE, matchPath);
+  }
 
   // Teams speichern
-  if (clean.homeTeamId && clean.homeTeam) {
-    await setDoc(
-      doc(db, "teams", clean.homeTeamId),
-      { name: clean.homeTeam, teamId: clean.homeTeamId },
-      { merge: true }
-    );
-  }
-  if (clean.awayTeamId && clean.awayTeam) {
-    await setDoc(
-      doc(db, "teams", clean.awayTeamId),
-      { name: clean.awayTeam, teamId: clean.awayTeamId },
-      { merge: true }
-    );
-  }
+  const saveTeam = async (teamId: string, name: string) => {
+    if (!teamId || !name) return;
+    const teamPath = `teams/${teamId}`;
+    try {
+      await setDoc(
+        doc(db, "teams", teamId),
+        { name, teamId },
+        { merge: true }
+      );
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, teamPath);
+    }
+  };
+
+  await saveTeam(clean.homeTeamId, clean.homeTeam);
+  await saveTeam(clean.awayTeamId, clean.awayTeam);
 
   // MVPs speichern
   const savePlayer = async (
@@ -748,11 +1011,16 @@ export async function saveMatchData(
   ) => {
     if (!name || !userId || isNA(name) || isNA(userId)) return;
     const playerId = name.replace(/\//g, "-");
-    await setDoc(
-      doc(db, "players", playerId),
-      { name, userId, teamId },
-      { merge: true }
-    );
+    const playerPath = `players/${playerId}`;
+    try {
+      await setDoc(
+        doc(db, "players", playerId),
+        { name, userId, teamId },
+        { merge: true }
+      );
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, playerPath);
+    }
   };
 
   await savePlayer(clean.mvpHomeName, clean.mvpHomeUserId, clean.homeTeamId);

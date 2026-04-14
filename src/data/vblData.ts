@@ -89,6 +89,15 @@ export const SEASON_MATCHES: Record<string, MatchReference> = {
     resultSets: "3:1",
     setPoints: "20:25, 25:20, 25:15, 25:14"
   },
+  "3072": {
+    matchId: "777353730",
+    homeTeam: "DSHS SnowTrex Köln",
+    homeTeamId: "776308895",
+    awayTeam: "NawaRo Straubing",
+    awayTeamId: "776308823",
+    venueName: "ACL 80 Köln",
+    locationId: "70012457"
+  },
   "3003": {
     matchId: "777353197",
     homeTeam: "Skurios Volleys Borken",

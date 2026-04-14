@@ -8,6 +8,8 @@ import { auth, db } from "./firebase";
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc, getDocs, getDocFromServer } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from "firebase/auth";
 
+import firebaseConfig from "../firebase-applet-config.json";
+
 // Error Boundary Component
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: { children: ReactNode }) {
@@ -54,6 +56,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
 // Test connection to Firestore
 async function testConnection() {
+  console.log("Initializing Firestore with config:", {
+    projectId: firebaseConfig.projectId,
+    databaseId: firebaseConfig.firestoreDatabaseId
+  });
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     console.log("Firestore connection test successful.");
@@ -91,10 +97,30 @@ function AppContent() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [manualMatchId, setManualMatchId] = useState("");
+  const [manualDate, setManualDate] = useState("");
+  const [manualTime, setManualTime] = useState("");
+  const [manualWeekday, setManualWeekday] = useState("");
   const [deleteMatchNumber, setDeleteMatchNumber] = useState("");
   const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
   const [dbMatchNumbers, setDbMatchNumbers] = useState<string[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [showDbDetails, setShowDbDetails] = useState(false);
+  const [allDbMatches, setAllDbMatches] = useState<any[]>([]);
+  const [isExplorerLoading, setIsExplorerLoading] = useState(false);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const ADMIN_EMAIL = "knud.zabrocki@gmail.com";
   const isAdmin = user?.email === ADMIN_EMAIL;
@@ -113,18 +139,22 @@ function AppContent() {
     const q = query(collection(db, "matches"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const numbers = snapshot.docs.map(doc => doc.id);
-      console.log(`Loaded ${numbers.length} matches from Firestore:`, numbers);
+      console.log(`Firestore Sync: ${numbers.length} matches loaded.`, numbers);
       setDbMatchNumbers(numbers);
       setIsDbLoading(false);
+      setDbError(null);
+      setLastSync(new Date());
     }, (err) => {
-      console.error("Error fetching matches from DB:", err);
+      console.error("Firestore Sync Error:", err);
+      setDbError(err.message);
+      setIsDbLoading(false);
+      
       // Fallback: If snapshot fails, try a one-time getDocs
       getDocs(q).then(snap => {
         setDbMatchNumbers(snap.docs.map(d => d.id));
-        setIsDbLoading(false);
+        setDbError(null);
       }).catch(e => {
         console.error("Fallback getDocs failed:", e);
-        setIsDbLoading(false);
       });
     });
     
@@ -173,7 +203,9 @@ function AppContent() {
     setLoading(true);
     setElapsedTime(0);
     const isKnown = !!SEASON_MATCHES[matchNumber] || dbMatchNumbers.includes(matchNumber);
-    setLogs([isKnown ? "Direktzugriff auf Master-Datenbank (Spiel bekannt)..." : "Initialisiere Suche..."]);
+    let initialLog = isKnown ? "Direktzugriff auf Master-Datenbank (Spiel bekannt)..." : "Initialisiere Suche...";
+    if (manualMatchId) initialLog = `Nutze manuelle Match-ID: ${manualMatchId}...`;
+    setLogs([initialLog]);
     setError("");
     setReport("");
     setPreviewData(null);
@@ -183,19 +215,51 @@ function AppContent() {
     let isRequestActive = true;
     const timeoutId = setTimeout(() => {
       if (isRequestActive) {
+        isRequestActive = false;
         setLoading(false);
-        setError("Die Suche dauert zu lange (über 3 Minuten). Bitte versuche es erneut oder wähle eine Mannschaft aus, um die Suche zu beschleunigen.");
+        const msg = "Die Suche dauert zu lange (Timeout nach 120s). Du kannst die Daten nun manuell eingeben.";
+        setError(msg);
+        setLogs(prev => [...prev, `⚠️ ${msg}`]);
+        
+        // Fallback-Daten setzen, damit die Maske aufgeht
+        const fallbackData: MatchReference = {
+          matchId: manualMatchId || "",
+          homeTeam: "",
+          homeTeamId: "",
+          awayTeam: "",
+          awayTeamId: "",
+          venueName: "",
+          locationId: "",
+          date: manualDate || "",
+          time: manualTime || "",
+          weekday: manualWeekday || "",
+        };
+        // Falls in SEASON_MATCHES vorhanden, als Basis nehmen
+        const staticData = SEASON_MATCHES[matchNumber];
+        setPreviewData(staticData ? { ...fallbackData, ...staticData } : fallbackData);
       }
-    }, 180000); // 180 seconds timeout
+    }, 120000); // 120 seconds timeout
 
     try {
-      const data = await fetchMatchDataFull(matchNumber, (newStatus) => {
-        setLogs(prev => {
-          if (prev[prev.length - 1] === newStatus) return prev;
-          return [...prev, newStatus];
-        });
-      }, forceRefresh, selectedTeamId, manualMatchId);
+      const data = await fetchMatchDataFull(
+        matchNumber, 
+        (newStatus) => {
+          setLogs(prev => {
+            if (prev[prev.length - 1] === newStatus) return prev;
+            return [...prev, newStatus];
+          });
+        }, 
+        forceRefresh, 
+        selectedTeamId, 
+        manualMatchId,
+        manualDate,
+        manualTime,
+        manualWeekday
+      );
       
+      console.log("Raw extracted data:", data);
+      
+      if (!isRequestActive) return; // Timeout ist bereits eingetreten
       isRequestActive = false;
       clearTimeout(timeoutId);
       setForceRefresh(false);
@@ -221,7 +285,30 @@ function AppContent() {
       isRequestActive = false;
       clearTimeout(timeoutId);
       console.error(err);
-      setError(err.message || "Ein Fehler ist aufgetreten.");
+      
+      const errorMsg = err.message || "Ein Fehler ist aufgetreten.";
+      setError(errorMsg);
+      setLogs(prev => [...prev, `❌ ${errorMsg}`]);
+      
+      // Bei Extraktionsfehlern: Maske trotzdem öffnen
+      if (errorMsg.includes("Keine Antwort von Gemini") || errorMsg.includes("Extraktion") || errorMsg.includes("Timeout")) {
+        setLogs(prev => [...prev, "Öffne manuelle Eingabemaske..."]);
+        const fallbackData: MatchReference = {
+          matchId: manualMatchId || "",
+          homeTeam: "",
+          homeTeamId: "",
+          awayTeam: "",
+          awayTeamId: "",
+          venueName: "",
+          locationId: "",
+          date: manualDate || "",
+          time: manualTime || "",
+          weekday: manualWeekday || "",
+        };
+        const staticData = SEASON_MATCHES[matchNumber];
+        setPreviewData(staticData ? { ...fallbackData, ...staticData } : fallbackData);
+      }
+      
       delete matchCache[matchNumber];
     } finally {
       setLoading(false);
@@ -419,28 +506,166 @@ function AppContent() {
                 </div>
                 <div>
                   <h2 className="text-xs uppercase tracking-widest font-bold text-[#5A5A40]">Master-Datenbank</h2>
-                  <p className="text-[10px] text-[#5A5A40]/60">Hinterlegte Match-IDs für 2025/26</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] text-[#5A5A40]/60">
+                      {dbMatchNumbers.length} Spiele in Firestore hinterlegt
+                    </p>
+                    <button 
+                      onClick={() => setShowDbDetails(!showDbDetails)}
+                      className="text-[9px] text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors"
+                      title="Datenbank-Details anzeigen"
+                    >
+                      <Info className="w-3 h-3" />
+                    </button>
+                  </div>
+                  {lastSync && (
+                    <p className="text-[8px] text-[#5A5A40]/30 italic">
+                      Zuletzt synchronisiert: {lastSync.toLocaleTimeString()}
+                    </p>
+                  )}
+                  {isAdmin && (
+                    <div className="flex flex-col gap-1 mt-1">
+                      <button 
+                        onClick={() => console.log("DB Match Numbers:", dbMatchNumbers)}
+                        className="text-[8px] text-[#5A5A40]/30 hover:underline text-left"
+                      >
+                        (Debug Log)
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          setIsExplorerLoading(true);
+                          try {
+                            const q = query(collection(db, "matches"));
+                            const snap = await getDocs(q);
+                            const data = snap.docs.map(d => d.data());
+                            setAllDbMatches(data);
+                            setShowDbDetails(true);
+                            console.log("Full DB Data:", data);
+                          } catch (e: any) {
+                            setError("Explorer Fehler: " + e.message);
+                          } finally {
+                            setIsExplorerLoading(false);
+                          }
+                        }}
+                        className="text-[8px] bg-[#5A5A40]/5 text-[#5A5A40]/60 px-1.5 py-0.5 rounded hover:bg-[#5A5A40]/10 transition-all flex items-center gap-1 w-fit"
+                      >
+                        {isExplorerLoading ? <Loader2 className="w-2 h-2 animate-spin" /> : <Database className="w-2 h-2" />}
+                        Daten-Explorer öffnen
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-              <button 
-                onClick={async () => {
-                  setIsDbLoading(true);
-                  const q = query(collection(db, "matches"));
-                  const snap = await getDocs(q);
-                  setDbMatchNumbers(snap.docs.map(d => d.id));
-                  setIsDbLoading(false);
-                }}
-                className={cn(
-                  "p-2 hover:bg-[#5A5A40]/10 rounded-full text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors",
-                  isDbLoading && "animate-spin"
+              <div className="flex items-center gap-2">
+                {!isOnline && (
+                  <div className="flex items-center gap-1 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                    <AlertCircle className="w-3 h-3" /> OFFLINE
+                  </div>
                 )}
-                title="Datenbank aktualisieren"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+                {dbError && (
+                  <div className="flex items-center gap-1 text-[10px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold">
+                    <Database className="w-3 h-3" /> SYNC FEHLER
+                  </div>
+                )}
+                <button 
+                  onClick={async () => {
+                    setIsDbLoading(true);
+                    try {
+                      const q = query(collection(db, "matches"));
+                      const snap = await getDocs(q);
+                      setDbMatchNumbers(snap.docs.map(d => d.id));
+                      setDbError(null);
+                    } catch (e: any) {
+                      setDbError(e.message);
+                    } finally {
+                      setIsDbLoading(false);
+                    }
+                  }}
+                  className={cn(
+                    "p-2 hover:bg-[#5A5A40]/10 rounded-full text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors",
+                    isDbLoading && "animate-spin"
+                  )}
+                  title="Datenbank aktualisieren"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-10 gap-2">
+
+          {showDbDetails && (
+            <div className="mt-4 p-4 bg-[#5A5A40]/5 rounded-2xl border border-[#5A5A40]/10 animate-in fade-in slide-in-from-top-2">
+              <h3 className="text-[10px] font-bold text-[#5A5A40] uppercase tracking-wider mb-2 flex items-center gap-1">
+                <Database className="w-3 h-3" /> Aktuelle Verbindung
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[9px] font-mono text-[#5A5A40]/70">
+                <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
+                  <span>Project ID:</span>
+                  <span className="font-bold">{firebaseConfig.projectId}</span>
+                </div>
+                <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
+                  <span>Database ID:</span>
+                  <span className="font-bold">{firebaseConfig.firestoreDatabaseId || "(default)"}</span>
+                </div>
+                <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
+                  <span>Status:</span>
+                  <span className={cn("font-bold", isOnline ? "text-green-600" : "text-red-600")}>
+                    {isOnline ? "Online" : "Offline"}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
+                  <span>Sync:</span>
+                  <span className={cn("font-bold", dbError ? "text-orange-600" : "text-green-600")}>
+                    {dbError ? "Fehler" : "Aktiv"}
+                  </span>
+                </div>
+              </div>
+              
+              {allDbMatches.length > 0 && (
+                <div className="mt-4">
+                  <h4 className="text-[9px] font-bold text-[#5A5A40] uppercase mb-2">Gespeicherte Dokumente:</h4>
+                  <div className="max-h-40 overflow-auto bg-white/50 rounded-xl p-2 border border-[#5A5A40]/10">
+                    <table className="w-full text-[8px] text-left">
+                      <thead>
+                        <tr className="border-b border-[#5A5A40]/10">
+                          <th className="p-1">Nr.</th>
+                          <th className="p-1">MatchId</th>
+                          <th className="p-1">Heim</th>
+                          <th className="p-1">Gast</th>
+                          <th className="p-1">Updated</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allDbMatches.map((m, i) => (
+                          <tr key={i} className="border-b border-black/5 hover:bg-white/50">
+                            <td className="p-1 font-bold">#{m.matchNumber}</td>
+                            <td className="p-1">{m.matchId || "-"}</td>
+                            <td className="p-1 truncate max-w-[60px]">{m.homeTeam}</td>
+                            <td className="p-1 truncate max-w-[60px]">{m.awayTeam}</td>
+                            <td className="p-1 text-[7px]">{m.updatedAt?.split('T')[0]}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button 
+                    onClick={() => setAllDbMatches([])}
+                    className="mt-2 text-[8px] text-red-500 hover:underline"
+                  >
+                    Explorer schließen
+                  </button>
+                </div>
+              )}
+
+              {dbError && (
+                <p className="mt-2 text-[9px] text-red-500 bg-red-50 p-2 rounded-lg border border-red-100">
+                  Fehler: {dbError}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-10 gap-2 mt-6">
             {Array.from(new Set([...Object.keys(SEASON_MATCHES), ...dbMatchNumbers]))
               .sort((a, b) => Number(a) - Number(b))
               .map(num => (
@@ -572,29 +797,83 @@ function AppContent() {
               </div>
             </div>
 
-            <div className="pt-2">
-              <label 
-                htmlFor="manualMatchId" 
-                className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
-              >
-                Manuelle Match-ID (Optional)
-              </label>
-              <div className="relative">
-                <input
-                  id="manualMatchId"
-                  type="text"
-                  value={manualMatchId}
-                  onChange={(e) => setManualMatchId(e.target.value.replace(/\D/g, ''))}
-                  placeholder="z.B. 777353472"
-                  disabled={loading}
-                  className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm font-mono focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed pr-12"
-                />
-                <Database className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40]/40" />
+              <div className="pt-2 grid md:grid-cols-3 gap-4">
+                <div>
+                  <label 
+                    htmlFor="manualWeekday" 
+                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                  >
+                    Wochentag (Optional)
+                  </label>
+                  <input
+                    id="manualWeekday"
+                    type="text"
+                    value={manualWeekday}
+                    onChange={(e) => setManualWeekday(e.target.value)}
+                    placeholder="z.B. Sonntag"
+                    disabled={loading}
+                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label 
+                    htmlFor="manualDate" 
+                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                  >
+                    Datum (Optional)
+                  </label>
+                  <input
+                    id="manualDate"
+                    type="text"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    placeholder="z.B. 29.03.2026"
+                    disabled={loading}
+                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label 
+                    htmlFor="manualTime" 
+                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                  >
+                    Uhrzeit (Optional)
+                  </label>
+                  <input
+                    id="manualTime"
+                    type="text"
+                    value={manualTime}
+                    onChange={(e) => setManualTime(e.target.value)}
+                    placeholder="z.B. 16:00"
+                    disabled={loading}
+                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
               </div>
-              <p className="mt-2 text-[10px] text-[#5A5A40]/40 italic">
-                Falls die Suche fehlschlägt: Die Match-ID findest du auf der VBL-Seite unter "i" (Info) in der URL (matchId=...).
-              </p>
-            </div>
+
+              <div className="pt-2">
+                <label 
+                  htmlFor="manualMatchId" 
+                  className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                >
+                  Manuelle Match-ID (Optional)
+                </label>
+                <div className="relative">
+                  <input
+                    id="manualMatchId"
+                    type="text"
+                    value={manualMatchId}
+                    onChange={(e) => setManualMatchId(e.target.value.replace(/\D/g, ''))}
+                    placeholder="z.B. 777353472"
+                    disabled={loading}
+                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm font-mono focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed pr-12"
+                  />
+                  <Database className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40]/40" />
+                </div>
+                <p className="mt-2 text-[10px] text-[#5A5A40]/40 italic">
+                  Falls die Suche fehlschlägt: Die Match-ID findest du auf der VBL-Seite unter "i" (Info) in der URL (matchId=...).
+                </p>
+              </div>
 
             <div className="relative">
               <p className="text-[10px] text-[#5A5A40]/50 italic mb-4">
@@ -719,7 +998,14 @@ function AppContent() {
         {/* Error Message */}
         {error && (
           <div className="bg-red-50 text-red-600 p-4 rounded-2xl border border-red-100 mb-8 font-medium">
-            {error}
+            {(() => {
+              try {
+                const parsed = JSON.parse(error);
+                return parsed.error || error;
+              } catch {
+                return error;
+              }
+            })()}
           </div>
         )}
 
@@ -761,6 +1047,16 @@ function AppContent() {
                     VBL Seite öffnen
                   </a>
                 )}
+                <button 
+                  onClick={() => {
+                    console.log("Raw Preview Data:", previewData);
+                    alert("Die Rohdaten wurden in die Browser-Konsole (F12) geloggt.");
+                  }}
+                  className="flex items-center gap-1.5 text-[10px] font-bold text-[#5A5A40] hover:underline bg-[#5A5A40]/5 py-1.5 px-3 rounded-full transition-all"
+                >
+                  <Database className="w-3 h-3" />
+                  Rohdaten (Konsole)
+                </button>
                 <button 
                   onClick={() => setPreviewData(null)}
                   className="text-gray-400 hover:text-red-500 transition-colors"
@@ -825,6 +1121,26 @@ function AppContent() {
                 onChange={(v) => updatePreviewField("locationId", v)} 
                 link={previewData.locationId ? LOCATION_URL(previewData.locationId) : undefined}
               />
+              <div className="md:col-span-2 grid grid-cols-3 gap-4">
+                <ValidationField 
+                  label="Wochentag" 
+                  value={previewData.weekday} 
+                  onChange={(v) => updatePreviewField("weekday", v)} 
+                  placeholder="z.B. Samstag"
+                />
+                <ValidationField 
+                  label="Datum" 
+                  value={previewData.date} 
+                  onChange={(v) => updatePreviewField("date", v)} 
+                  placeholder="z.B. 28.03.2026"
+                />
+                <ValidationField 
+                  label="Uhrzeit" 
+                  value={previewData.time} 
+                  onChange={(v) => updatePreviewField("time", v)} 
+                  placeholder="z.B. 19:00"
+                />
+              </div>
               <ValidationField 
                 label="Zuschauer" 
                 value={previewData.spectators} 
