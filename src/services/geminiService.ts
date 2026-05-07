@@ -841,7 +841,7 @@ export function buildReport(
     `[Re-Live DYN Volleyball YouTube (kostenfrei)](${data.youtubeUrl || YOUTUBE_PLAYLIST_URL})`,
   ];
 
-  return lines.join("\\n\\n");
+  return lines.join("\n\n");
 }
 
 /**
