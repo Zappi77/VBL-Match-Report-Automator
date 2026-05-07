@@ -752,7 +752,7 @@ async function extractMatchData(
   // Wir wollen "Heim:Gast" (z.B. 75:58)
   if (data.setPoints && (!data.totalPoints || !String(data.totalPoints).includes(":"))) {
     try {
-      const sets = String(data.setPoints).match(/\\d+:\\d+/g);
+      const sets = String(data.setPoints).match(/\d+:\d+/g);
       if (sets) {
         let totalHome = 0;
         let totalAway = 0;
@@ -790,7 +790,6 @@ export async function deleteMatchEntry(matchNumber: string): Promise<void> {
     handleFirestoreError(e, OperationType.DELETE, path);
   }
 }
-
 export function buildReport(
   data: Record<string, unknown>,
   matchNumber: string
@@ -841,7 +840,7 @@ export function buildReport(
     `[Re-Live DYN Volleyball YouTube (kostenfrei)](${data.youtubeUrl || YOUTUBE_PLAYLIST_URL})`,
   ];
 
-  return lines.join("\\n\\n");
+  return lines.join("\n\n");
 }
 
 /**

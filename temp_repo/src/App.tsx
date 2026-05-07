@@ -1,8 +1,16 @@
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
-import { fetchMatchDataFull, saveMatchData, getMatchReport, matchCache, buildReport, saveReport, deleteMatchEntry } from "./services/geminiService";
+import { fetchMatchDataFullWithOptions, saveMatchData, getMatchReport, matchCache, buildReport, saveReport, deleteMatchEntry } from "./services/geminiService";
 import { SEASON_MATCHES, KNOWN_TEAMS, type MatchReference } from "./data/vblData";
 import { Loader2, Copy, Check, Volleyball, Search, ExternalLink, Code, RefreshCw, Youtube, FileText, Layout, Info, AlertCircle, Database, Users, LogIn, LogOut, ShieldCheck, Save, Edit3, X } from "lucide-react";
 import { cn } from "./lib/utils";
+import { useLocalStorageBoolean } from "./lib/useLocalStorageBoolean";
+import { useOnlineStatus } from "./lib/useOnlineStatus";
+import { buildGenerationStartLogs } from "./lib/generationLogs";
+import { useElapsedTimer } from "./lib/useElapsedTimer";
+import { useMatchGenerationState } from "./lib/useMatchGenerationState";
+import { AiFallbackToggle } from "./components/AiFallbackToggle";
+import { GenerationLogsPanel } from "./components/GenerationLogsPanel";
+import { ErrorAlert } from "./components/ErrorAlert";
 import ReactMarkdown from "react-markdown";
 import { auth, db } from "./firebase";
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc, getDocs, getDocFromServer } from "firebase/firestore";
@@ -81,18 +89,27 @@ export default function App() {
 
 function AppContent() {
   const [matchNumber, setMatchNumber] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const {
+    loading,
+    setLoading,
+    logs,
+    setLogs,
+    error,
+    setError,
+    handleStatusUpdate,
+    startGeneration,
+    finishGeneration,
+  } = useMatchGenerationState();
   const [report, setReport] = useState("");
   const [previewData, setPreviewData] = useState<MatchReference | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
-  const [error, setError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(false);
-  const [elapsedTime, setElapsedTime] = useState(0);
+  const [allowAiFallback, setAllowAiFallback] = useLocalStorageBoolean("allowAiFallback", true);
+  const { elapsedTime, setElapsedTime } = useElapsedTimer(loading);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState("");
@@ -105,22 +122,11 @@ function AppContent() {
   const [dbMatchNumbers, setDbMatchNumbers] = useState<string[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const isOnline = useOnlineStatus();
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [showDbDetails, setShowDbDetails] = useState(false);
   const [allDbMatches, setAllDbMatches] = useState<any[]>([]);
   const [isExplorerLoading, setIsExplorerLoading] = useState(false);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   const ADMIN_EMAIL = "knud.zabrocki@gmail.com";
   const isAdmin = user?.email === ADMIN_EMAIL;
@@ -200,13 +206,9 @@ function AppContent() {
     e.preventDefault();
     if (!matchNumber) return;
 
-    setLoading(true);
-    setElapsedTime(0);
     const isKnown = !!SEASON_MATCHES[matchNumber] || dbMatchNumbers.includes(matchNumber);
-    let initialLog = isKnown ? "Direktzugriff auf Master-Datenbank (Spiel bekannt)..." : "Initialisiere Suche...";
-    if (manualMatchId) initialLog = `Nutze manuelle Match-ID: ${manualMatchId}...`;
-    setLogs([initialLog]);
-    setError("");
+    startGeneration(buildGenerationStartLogs(isKnown, manualMatchId, allowAiFallback));
+    setElapsedTime(0);
     setReport("");
     setPreviewData(null);
     setSaveSuccess(false);
@@ -216,7 +218,7 @@ function AppContent() {
     const timeoutId = setTimeout(() => {
       if (isRequestActive) {
         isRequestActive = false;
-        setLoading(false);
+        finishGeneration();
         const msg = "Die Suche dauert zu lange (Timeout nach 120s). Du kannst die Daten nun manuell eingeben.";
         setError(msg);
         setLogs(prev => [...prev, `⚠️ ${msg}`]);
@@ -241,20 +243,18 @@ function AppContent() {
     }, 120000); // 120 seconds timeout
 
     try {
-      const data = await fetchMatchDataFull(
-        matchNumber, 
-        (newStatus) => {
-          setLogs(prev => {
-            if (prev[prev.length - 1] === newStatus) return prev;
-            return [...prev, newStatus];
-          });
-        }, 
-        forceRefresh, 
-        selectedTeamId, 
-        manualMatchId,
-        manualDate,
-        manualTime,
-        manualWeekday
+      const data = await fetchMatchDataFullWithOptions(
+        matchNumber,
+        {
+          forceRefresh,
+          selectedTeamId,
+          manualMatchId,
+          manualDate,
+          manualTime,
+          manualWeekday,
+          allowAiFallback,
+        },
+        handleStatusUpdate
       );
       
       console.log("Raw extracted data:", data);
@@ -311,7 +311,7 @@ function AppContent() {
       
       delete matchCache[matchNumber];
     } finally {
-      setLoading(false);
+      finishGeneration();
     }
   };
 
@@ -399,19 +399,6 @@ function AppContent() {
     setCopiedHtml(true);
     setTimeout(() => setCopiedHtml(false), 2000);
   };
-
-  // Timer effect
-  useEffect(() => {
-    let interval: any;
-    if (loading) {
-      interval = setInterval(() => {
-        setElapsedTime(prev => prev + 1);
-      }, 1000);
-    } else {
-      setElapsedTime(0);
-    }
-    return () => clearInterval(interval);
-  }, [loading]);
 
   return (
     <div className="min-h-screen bg-[#F5F5F0] text-[#141414] font-sans p-4 md:p-8">
@@ -903,9 +890,9 @@ function AppContent() {
                     </>
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleRefresh}
+              <button
+                type="button"
+                onClick={handleRefresh}
                   className={cn(
                     "px-6 rounded-2xl border-2 border-[#5A5A40]/20 text-[#5A5A40] hover:bg-[#5A5A40]/5 transition-all flex items-center justify-center relative",
                     isRefreshing && "bg-[#5A5A40]/10 border-[#5A5A40]/40"
@@ -916,8 +903,13 @@ function AppContent() {
                   {forceRefresh && (
                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse" />
                   )}
-                </button>
-              </div>
+              </button>
+              <AiFallbackToggle
+                allowAiFallback={allowAiFallback}
+                onChange={setAllowAiFallback}
+                disabled={loading}
+              />
+            </div>
               {forceRefresh && (
                 <p className="mt-2 text-[10px] text-red-500 font-bold uppercase tracking-widest flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" /> Modus: Neugenerierung (Cache wird ignoriert)
@@ -966,48 +958,10 @@ function AppContent() {
             </div>
           </form>
 
-          {/* Status Indicator / Logs */}
-          {loading && logs.length > 0 && (
-            <div className="mt-6 bg-[#5A5A40]/5 p-6 rounded-2xl border border-[#5A5A40]/10">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-start gap-3">
-                  <Loader2 className="w-5 h-5 text-[#5A5A40] animate-spin mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-[#5A5A40]">Live-Protokoll (KI-Suche)</p>
-                    <p className="text-sm font-medium italic text-[#5A5A40]">{logs[logs.length - 1]}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs font-mono font-bold text-[#5A5A40]">{elapsedTime}s</span>
-                  <p className="text-[8px] text-[#5A5A40]/40 uppercase tracking-widest">Abgelaufen</p>
-                </div>
-              </div>
-              
-              <div className="max-h-32 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
-                {logs.slice(0, -1).reverse().map((log, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[10px] text-[#5A5A40]/50 font-mono">
-                    <Check className="w-3 h-3" />
-                    <span>{log}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <GenerationLogsPanel loading={loading} logs={logs} elapsedTime={elapsedTime} />
         </section>
 
-        {/* Error Message */}
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-2xl border border-red-100 mb-8 font-medium">
-            {(() => {
-              try {
-                const parsed = JSON.parse(error);
-                return parsed.error || error;
-              } catch {
-                return error;
-              }
-            })()}
-          </div>
-        )}
+        <ErrorAlert error={error} />
 
         {/* Success Message */}
         {saveSuccess && (
