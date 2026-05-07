@@ -6,6 +6,7 @@ import {
   SEASON_MATCHES,
   type MatchReference,
 } from "../data/vblData";
+import { extractMatchIdCandidate } from "../lib/matchIdParsing";
 import { db, auth } from "../firebase";
 import {
   doc,
@@ -63,6 +64,18 @@ const isNA = (val: unknown): boolean =>
     String(val).trim().toLowerCase()
   );
 
+type MatchIdResolveSource = "direct_scraping" | "ai_resolution";
+type MatchIdResolveResult = {
+  matchId: string | null;
+  source: MatchIdResolveSource;
+  durationMs: number;
+  error?: {
+    kind: "network_or_cors" | "unknown";
+    message: string;
+    url?: string;
+  };
+};
+
 const isValidMatchId = (val: unknown, matchNumber: string): boolean => {
   const s = String(val || "").trim();
   // matchId darf keine bekannte teamId sein
@@ -105,6 +118,122 @@ const extractUUID = (val: unknown): string => {
   );
   return uuidMatch ? uuidMatch[0] : "";
 };
+
+async function tryResolveMatchIdByDirectScraping(
+  matchNumber: string,
+  selectedTeamId?: string
+): Promise<MatchIdResolveResult> {
+  const startedAt = Date.now();
+  const candidateUrls: string[] = [];
+  if (selectedTeamId) {
+    candidateUrls.push(TEAM_MATCHES_URL(selectedTeamId));
+  }
+  candidateUrls.push(LEAGUE_SCHEDULE_URL);
+
+  for (const url of candidateUrls) {
+    try {
+      const html = await fetch(url).then((r) => r.text());
+
+      const candidate = extractMatchIdCandidate(html, matchNumber);
+      if (candidate && isValidMatchId(candidate, matchNumber)) {
+        return { matchId: candidate, source: "direct_scraping", durationMs: Date.now() - startedAt };
+      }
+    } catch (error) {
+      // Browser/CORS kann das blockieren; dann gehen wir auf KI-Fallback.
+      console.warn(`Direct scraping failed for ${url}:`, error);
+      return {
+        matchId: null,
+        source: "direct_scraping",
+        durationMs: Date.now() - startedAt,
+        error: {
+          kind: "network_or_cors",
+          message: error instanceof Error ? error.message : String(error),
+          url,
+        },
+      };
+    }
+  }
+
+  return { matchId: null, source: "direct_scraping", durationMs: Date.now() - startedAt };
+}
+
+async function tryResolveMatchIdWithAI(
+  matchNumber: string,
+  searchUrls: string[],
+  onStatusUpdate?: (s: string) => void
+): Promise<MatchIdResolveResult> {
+  const startedAt = Date.now();
+  const prompt = `
+    AUFGABE: Finde die matchId für das VBL Volleyball Spiel Nummer ${matchNumber} (Saison 2025/26).
+    
+    SUCHE AUF DIESEN SEITEN:
+    ${searchUrls.map((url, i) => `${i + 1}. ${url}`).join("\n")}
+    
+    ANWEISUNG:
+    1. Suche in den Tabellen nach der Spielnummer ${matchNumber}.
+    2. Die matchId steht im Link zum Info-Icon "i" oder zur Detailseite (matchDetails.xhtml?matchId=XXXXXXXXX) oder im Attribut id="match_XXXXXXXXX".
+    3. Die matchId ist eine 9-stellige Zahl (beginnt meist mit 777).
+    
+    WICHTIG:
+    - Die matchId ist NICHT die Spielnummer ${matchNumber}.
+    - Falls du die ID auf der ersten Seite findest, brich ab und gib sie zurück.
+    - Falls nicht gefunden, suche auf der nächsten Seite.
+    
+    Antworte NUR mit der matchId als Zahl. Falls absolut nicht gefunden, antworte "not_found".
+  `;
+
+  onStatusUpdate?.("Analysiere VBL-Seiten parallel...");
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: MODEL_FAST,
+      contents: prompt,
+      config: {
+        tools: [{ urlContext: {} }],
+      },
+    });
+  } catch (e) {
+    console.warn("MODEL_FAST failed for resolveMatchId, trying MODEL_SMART...", e);
+    response = await ai.models.generateContent({
+      model: MODEL_SMART,
+      contents: prompt,
+      config: {
+        tools: [{ urlContext: {} }],
+      },
+    });
+  }
+
+  const text = (response.text || "").trim();
+  const match = text.match(/\b(\d{8,10})\b/);
+  if (match && isValidMatchId(match[0], matchNumber)) {
+    onStatusUpdate?.(`matchId gefunden: ${match[0]}`);
+    return { matchId: match[0], source: "ai_resolution", durationMs: Date.now() - startedAt };
+  }
+
+  onStatusUpdate?.("VBL-Direktsuche erfolglos. Starte Google-Suche...");
+  const searchPrompt = `
+    Suche nach der matchId für "VBL Volleyball Spiel ${matchNumber} 2025/26".
+    Die matchId ist 9-stellig und steht in der URL hinter matchId=.
+    Antworte NUR mit der ID.
+  `;
+
+  const searchResponse = await ai.models.generateContent({
+    model: MODEL_FAST,
+    contents: searchPrompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const searchText = (searchResponse.text || "").trim();
+  const searchMatch = searchText.match(/\b(\d{8,10})\b/);
+  if (searchMatch && isValidMatchId(searchMatch[0], matchNumber)) {
+    onStatusUpdate?.(`matchId via Google gefunden: ${searchMatch[0]}`);
+    return { matchId: searchMatch[0], source: "ai_resolution", durationMs: Date.now() - startedAt };
+  }
+
+  return { matchId: null, source: "ai_resolution", durationMs: Date.now() - startedAt };
+}
 
 const extractUserId = (val: unknown): string => {
   if (!val) return "";
@@ -183,14 +312,24 @@ function logFirestoreError(error: unknown, operation: string, path: string) {
 // ─────────────────────────────────────────────
 export const matchCache: Record<string, string> = {};
 
+export interface FetchMatchDataOptions {
+  forceRefresh?: boolean;
+  selectedTeamId?: string;
+  manualMatchId?: string;
+  manualDate?: string;
+  manualTime?: string;
+  manualWeekday?: string;
+  allowAiFallback?: boolean;
+}
+
 // ─────────────────────────────────────────────
 // PHASE 1: matchId auflösen (isoliert & fokussiert)
 // ─────────────────────────────────────────────
 async function resolveMatchId(
   matchNumber: string,
-  homeTeamId: string,
   onStatusUpdate?: (s: string) => void,
-  selectedTeamId?: string
+  selectedTeamId?: string,
+  allowAiFallback = true
 ): Promise<string | null> {
   onStatusUpdate?.(`Suche matchId für Spiel #${matchNumber}...`);
 
@@ -199,78 +338,36 @@ async function resolveMatchId(
     searchUrls.unshift(TEAM_MATCHES_URL(selectedTeamId));
   }
 
-  const prompt = `
-    AUFGABE: Finde die matchId für das VBL Volleyball Spiel Nummer ${matchNumber} (Saison 2025/26).
-    
-    SUCHE AUF DIESEN SEITEN:
-    ${searchUrls.map((url, i) => `${i + 1}. ${url}`).join("\n")}
-    
-    ANWEISUNG:
-    1. Suche in den Tabellen nach der Spielnummer ${matchNumber}.
-    2. Die matchId steht im Link zum Info-Icon "i" oder zur Detailseite (matchDetails.xhtml?matchId=XXXXXXXXX) oder im Attribut id="match_XXXXXXXXX".
-    3. Die matchId ist eine 9-stellige Zahl (beginnt meist mit 777).
-    
-    WICHTIG:
-    - Die matchId ist NICHT die Spielnummer ${matchNumber}.
-    - Falls du die ID auf der ersten Seite findest, brich ab und gib sie zurück.
-    - Falls nicht gefunden, suche auf der nächsten Seite.
-    
-    Antworte NUR mit der matchId als Zahl. Falls absolut nicht gefunden, antworte "not_found".
-  `;
+  type MatchIdResolver = {
+    status: string;
+    run: () => Promise<MatchIdResolveResult>;
+  };
+
+  const resolvers: MatchIdResolver[] = [
+    {
+      status: "Versuche direkte Seitenauswertung (ohne KI)...",
+      run: async () => tryResolveMatchIdByDirectScraping(matchNumber, selectedTeamId),
+    },
+    ...(allowAiFallback
+      ? [{
+          status: "Starte KI-gestützte Auflösung...",
+          run: async () => tryResolveMatchIdWithAI(matchNumber, searchUrls, onStatusUpdate),
+        }]
+      : []),
+  ];
 
   try {
-    onStatusUpdate?.("Analysiere VBL-Seiten parallel...");
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: MODEL_FAST,
-        contents: prompt,
-        config: {
-          tools: [{ urlContext: {} }],
-        },
-      });
-    } catch (e) {
-      console.warn("MODEL_FAST failed for resolveMatchId, trying MODEL_SMART...", e);
-      response = await ai.models.generateContent({
-        model: MODEL_SMART,
-        contents: prompt,
-        config: {
-          tools: [{ urlContext: {} }],
-        },
-      });
+    for (const resolver of resolvers) {
+      onStatusUpdate?.(resolver.status);
+      const result = await resolver.run();
+      if (result.matchId) {
+        onStatusUpdate?.(`matchId über ${result.source} gefunden: ${result.matchId} (${result.durationMs}ms)`);
+        return result.matchId;
+      }
+      if (result.error) {
+        onStatusUpdate?.(`Hinweis ${result.source}/${result.error.kind}: ${result.error.message}`);
+      }
     }
-
-    const text = (response.text || "").trim();
-    const match = text.match(/\b(\d{8,10})\b/);
-    
-    if (match && isValidMatchId(match[0], matchNumber)) {
-      onStatusUpdate?.(`matchId gefunden: ${match[0]}`);
-      return match[0];
-    }
-
-    // Fallback: Google Search nur wenn urlContext nichts liefert
-    onStatusUpdate?.("VBL-Direktsuche erfolglos. Starte Google-Suche...");
-    const searchPrompt = `
-      Suche nach der matchId für "VBL Volleyball Spiel ${matchNumber} 2025/26".
-      Die matchId ist 9-stellig und steht in der URL hinter matchId=.
-      Antworte NUR mit der ID.
-    `;
-
-    const searchResponse = await ai.models.generateContent({
-      model: MODEL_FAST,
-      contents: searchPrompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    });
-
-    const searchText = (searchResponse.text || "").trim();
-    const searchMatch = searchText.match(/\b(\d{8,10})\b/);
-    if (searchMatch && isValidMatchId(searchMatch[0], matchNumber)) {
-      onStatusUpdate?.(`matchId via Google gefunden: ${searchMatch[0]}`);
-      return searchMatch[0];
-    }
-
   } catch (e) {
     console.error("resolveMatchId failed:", e);
   }
@@ -757,7 +854,8 @@ export async function fetchMatchDataFull(
   manualMatchId?: string,
   manualDate?: string,
   manualTime?: string,
-  manualWeekday?: string
+  manualWeekday?: string,
+  allowAiFallback = true
 ): Promise<MatchReference> {
   // Eingabe validieren
   if (!matchNumber || isNaN(Number(matchNumber))) {
@@ -783,17 +881,11 @@ export async function fetchMatchDataFull(
   if (needsResolution) {
     onStatusUpdate?.(forceRefresh ? "Force-Refresh: Re-resolving matchId..." : "matchId fehlt – starte Auflösung...");
 
-    // homeTeamId ermitteln (aus DB oder KNOWN_TEAMS)
-    const homeTeamId =
-      knownData.homeTeamId ||
-      (knownData.homeTeam ? KNOWN_TEAMS[knownData.homeTeam] : null) ||
-      Object.values(KNOWN_TEAMS)[0];
-
     resolvedId = (await resolveMatchId(
       matchNumber,
-      homeTeamId,
       onStatusUpdate,
-      selectedTeamId
+      selectedTeamId,
+      allowAiFallback
     )) || "";
 
     if (resolvedId) {
@@ -939,6 +1031,24 @@ export async function fetchMatchDataFull(
   if (manualWeekday) rawData.weekday = manualWeekday;
 
   return rawData as MatchReference;
+}
+
+export async function fetchMatchDataFullWithOptions(
+  matchNumber: string,
+  options: FetchMatchDataOptions = {},
+  onStatusUpdate?: (status: string) => void
+): Promise<MatchReference> {
+  return fetchMatchDataFull(
+    matchNumber,
+    onStatusUpdate,
+    options.forceRefresh,
+    options.selectedTeamId,
+    options.manualMatchId,
+    options.manualDate,
+    options.manualTime,
+    options.manualWeekday,
+    options.allowAiFallback
+  );
 }
 
 /**
