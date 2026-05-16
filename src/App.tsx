@@ -8,7 +8,7 @@ import { auth, db } from "./firebase";
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc, getDocs, getDocFromServer } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from "firebase/auth";
 
-import firebaseConfig from "../firebase-applet-config.json";
+
 
 // Error Boundary Component
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: any }> {
@@ -57,8 +57,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 // Test connection to Firestore
 async function testConnection() {
   console.log("Initializing Firestore with config:", {
-    projectId: firebaseConfig.projectId,
-    databaseId: firebaseConfig.firestoreDatabaseId
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    databaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID
   });
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
@@ -601,11 +601,11 @@ function AppContent() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[9px] font-mono text-[#5A5A40]/70">
                 <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
                   <span>Project ID:</span>
-                  <span className="font-bold">{firebaseConfig.projectId}</span>
+                  <span className="font-bold">{import.meta.env.VITE_FIREBASE_PROJECT_ID}</span>
                 </div>
                 <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
                   <span>Database ID:</span>
-                  <span className="font-bold">{firebaseConfig.firestoreDatabaseId || "(default)"}</span>
+                  <span className="font-bold">{import.meta.env.VITE_FIREBASE_DATABASE_ID || "(default)"}</span>
                 </div>
                 <div className="flex justify-between border-b border-[#5A5A40]/10 py-1">
                   <span>Status:</span>
