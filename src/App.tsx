@@ -1312,6 +1312,7 @@ const STATS_URL = (matchNumber: string) => `https://live.volleyball-bundesliga.d
 const SAMS_URL = (uuid: string, matchNumber: string) => `https://distributor.sams-score.de/scoresheet/pdf/${uuid}/${matchNumber}`;
 const LOCATION_URL = (locationId: string) => `https://www.volleyball-bundesliga.de/popup/location/locationDetails.xhtml?locationId=${locationId}&showVolleyballFields=true`;
 const TEAM_URL = (teamId: string) => `https://www.volleyball-bundesliga.de/cms/home/2_bundesliga_frauen/2_bundesliga_frauen_pro/mannschaften.xhtml?c.teamId=${teamId}&c.view=teamMain#samsCmsComponent_766577326`;
+/*
 const TEAM_LOGO_URL = (teamId: string) => {
   const customLogos: Record<string, string> = {
     "776309795": "https://www.volleyball-bundesliga.de/uploads/89cb6afe-a0c8-4c30-a4c6-34cbe79176aa/TV_Waldgirmes_kreis.png",
@@ -1332,6 +1333,52 @@ const TEAM_LOGO_URL = (teamId: string) => {
   };
   return customLogos[teamId] || `https://vbl-web.sams-server.de/public/team/logo/${teamId}`;
 };
+*/
+
+const TEAM_LOGO_URL = (teamId: string) => {
+  const badges: Record<string, { code: string; bg: string; fg?: string }> = {
+    "776308895": { code: "KOE", bg: "#0D539E" }, // DSHS SnowTreX Köln
+    "776311815": { code: "DUS", bg: "#343434" }, // Eintracht Spontent Düsseldorf
+    "776308803": { code: "GRI", bg: "#C3C3C3", fg: "#111111" }, // ESA Grimma Volleys
+    "776308933": { code: "LEV", bg: "#343434" }, // BayerVolleys Leverkusen
+    "776308823": { code: "STR", bg: "#EE7101" }, // NawaRo Straubing
+    "776309559": { code: "MAR", bg: "#7AB529" }, // Neuseenland-Volleys Markkleeberg
+    "776309386": { code: "HST", bg: "#343434" }, // Sparkassen Wildcats Stralsund
+    "776309673": { code: "PLA", bg: "#A4CFA1", fg: "#111111" }, // TV Planegg-Krailling
+    "776309795": { code: "WAL", bg: "#3898CF" }, // TV Waldgirmes
+    "776309105": { code: "DRS", bg: "#009CD0" }, // VCO Dresden
+    "776309082": { code: "VIL", bg: "#B00020" }, // Rote Raben Vilsbiburg
+    "776309004": { code: "DIN", bg: "#1D4ED8" }, // TV Dingolfing
+    "776309275": { code: "HOR", bg: "#555555" }, // TV Hörde
+    "776308987": { code: "BER", bg: "#1E3A8A" }, // BBSC Berlin
+    "776308853": { code: "OYT", bg: "#555555" }  // VfL Oythe
+  };
+
+  const badge = badges[teamId];
+
+  if (!badge) {
+    return `https://vbl-web.sams-server.de/public/team/logo/${teamId}`;
+  }
+
+  const fg = badge.fg || "#ffffff";
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="18" fill="${badge.bg}"/>
+      <text x="64" y="76"
+        text-anchor="middle"
+        font-family="Arial, Helvetica, sans-serif"
+        font-size="38"
+        font-weight="800"
+        fill="${fg}">
+        ${badge.code}
+      </text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+};
+
 const PLAYER_URL = (teamId: string, userId: string) => `https://www.volleyball-bundesliga.de/popup/teamMember/teamMemberDetails.xhtml?teamId=${teamId}&userId=${userId}`;
 
 function ValidationField({ label, value, onChange, warning, placeholder, link, logo }: { 
