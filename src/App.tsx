@@ -1337,21 +1337,21 @@ const TEAM_LOGO_URL = (teamId: string) => {
 
 const TEAM_LOGO_URL = (teamId: string) => {
   const badges: Record<string, { code: string; bg: string; fg?: string }> = {
-    "776308895": { code: "KOE", bg: "#0D539E" }, // DSHS SnowTreX Köln
-    "776311815": { code: "DUS", bg: "#343434" }, // Eintracht Spontent Düsseldorf
-    "776308803": { code: "GRI", bg: "#C3C3C3", fg: "#111111" }, // ESA Grimma Volleys
-    "776308933": { code: "LEV", bg: "#343434" }, // BayerVolleys Leverkusen
+    "776308895": { code: "DSK", bg: "#1A6FB5" }, // DSHS SnowTrex Köln
+    "776311815": { code: "ESD", bg: "#343434" }, // Eintracht Spontent Düsseldorf
+    "776308803": { code: "EGV", bg: "#C3C3C3", fg: "#111111" }, // ESA Grimma Volleys
+    "776308933": { code: "BVL", bg: "#343434" }, // BayerVolleys Leverkusen
     "776308823": { code: "STR", bg: "#EE7101" }, // NawaRo Straubing
-    "776309559": { code: "MAR", bg: "#7AB529" }, // Neuseenland-Volleys Markkleeberg
-    "776309386": { code: "HST", bg: "#343434" }, // Sparkassen Wildcats Stralsund
-    "776309673": { code: "PLA", bg: "#A4CFA1", fg: "#111111" }, // TV Planegg-Krailling
-    "776309795": { code: "WAL", bg: "#3898CF" }, // TV Waldgirmes
-    "776309105": { code: "DRS", bg: "#009CD0" }, // VCO Dresden
-    "776309082": { code: "VIL", bg: "#B00020" }, // Rote Raben Vilsbiburg
-    "776309004": { code: "DIN", bg: "#1D4ED8" }, // TV Dingolfing
-    "776309275": { code: "HOR", bg: "#555555" }, // TV Hörde
-    "776308987": { code: "BER", bg: "#1E3A8A" }, // BBSC Berlin
-    "776308853": { code: "OYT", bg: "#555555" }  // VfL Oythe
+    "776309559": { code: "NVM", bg: "#7AB529" }, // Neuseenland-Volleys Markkleeberg
+    "776309386": { code: "SWS", bg: "#343434" }, // Sparkassen Wildcats Stralsund
+    "776309673": { code: "TVP", bg: "#A4CFA1", fg: "#111111" }, // TV Planegg-Krailling
+    "776309795": { code: "TVW", bg: "#3898CF" }, // TV Waldgirmes
+    "776309105": { code: "VCO", bg: "#009CD0" }, // VCO Dresden
+    "776308853": { code: "OYT", bg: "#E31825" }, // VfL Oythe
+    "776309082": { code: "RRV", bg: "#E20010" }, // Rote Raben Vilsbiburg
+    "776308987": { code: "BER", bg: "#D70079" }, // BBSC Berlin
+    "776309004": { code: "TVD", bg: "#E0B187", fg: "#111111" }, // TV Dingolfing
+    "776309275": { code: "TVH", bg: "#1A1A1A" }, // TV Hörde
   };
 
   const badge = badges[teamId];
