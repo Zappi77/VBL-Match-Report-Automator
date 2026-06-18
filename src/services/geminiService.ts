@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import {
   KNOWN_TEAMS,
   KNOWN_LOCATIONS,
@@ -20,8 +19,6 @@ import {
 // ─────────────────────────────────────────────
 // Konstanten
 // ─────────────────────────────────────────────
-const MODEL_FAST = "gemini-3-flash-preview";
-const MODEL_SMART = "gemini-3.1-pro-preview";
 
 const YOUTUBE_PLAYLIST_URL =
   "https://www.youtube.com/watch?v=-FkRIwJ7_KI&list=PLKvhsxfxEhVcbdeGhYZfXAPpB8UFaFWrp";
@@ -56,7 +53,31 @@ const VBL_TICKER_URL = (uuid: string) =>
 // ─────────────────────────────────────────────
 // Hilfsfunktionen
 // ─────────────────────────────────────────────
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+type GeminiApiMode =
+  | "resolve_match_id_url_context"
+  | "resolve_match_id_google_search"
+  | "extract_match_data";
+
+async function callGeminiApi(
+  mode: GeminiApiMode,
+  prompt: string
+): Promise<string> {
+  const response = await fetch("/api/gemini", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode, prompt }),
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error || "Gemini API request failed.");
+  }
+
+  return String(data?.text || "").trim();
+}
 
 const isNA = (val: unknown): boolean =>
   !val ||
@@ -183,27 +204,15 @@ async function tryResolveMatchIdWithAI(
   `;
 
   onStatusUpdate?.("Analysiere VBL-Seiten parallel...");
-  let response;
-  try {
-    response = await ai.models.generateContent({
-      model: MODEL_FAST,
-      contents: prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-      },
-    });
-  } catch (e) {
-    console.warn("MODEL_FAST failed for resolveMatchId, trying MODEL_SMART...", e);
-    response = await ai.models.generateContent({
-      model: MODEL_SMART,
-      contents: prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-      },
-    });
-  }
+  let text = "";
 
-  const text = (response.text || "").trim();
+try {
+  text = await callGeminiApi("resolve_match_id_url_context", prompt);
+} catch (e) {
+  console.warn("Server-side urlContext resolve failed:", e);
+  onStatusUpdate?.("⚠️ URL-Kontext nicht verfügbar. Nutze Google-Suche...");
+  text = "";
+}
   const match = text.match(/\b(\d{8,10})\b/);
   if (match && isValidMatchId(match[0], matchNumber)) {
     onStatusUpdate?.(`matchId gefunden: ${match[0]}`);
@@ -217,15 +226,10 @@ async function tryResolveMatchIdWithAI(
     Antworte NUR mit der ID.
   `;
 
-  const searchResponse = await ai.models.generateContent({
-    model: MODEL_FAST,
-    contents: searchPrompt,
-    config: {
-      tools: [{ googleSearch: {} }],
-    },
-  });
-
-  const searchText = (searchResponse.text || "").trim();
+  const searchText = await callGeminiApi(
+  "resolve_match_id_google_search",
+  searchPrompt
+);
   const searchMatch = searchText.match(/\b(\d{8,10})\b/);
   if (searchMatch && isValidMatchId(searchMatch[0], matchNumber)) {
     onStatusUpdate?.(`matchId via Google gefunden: ${searchMatch[0]}`);
@@ -448,46 +452,6 @@ async function getMatchData(
 }
 
 // ─────────────────────────────────────────────
-// JSON Schema für Gemini
-// ─────────────────────────────────────────────
-const matchSchema = {
-  type: Type.OBJECT,
-  properties: {
-    matchNumber:    { type: Type.STRING },
-    weekday:        { type: Type.STRING },
-    date:           { type: Type.STRING },
-    time:           { type: Type.STRING },
-    homeTeam:       { type: Type.STRING },
-    awayTeam:       { type: Type.STRING },
-    homeTeamId:     { type: Type.STRING },
-    awayTeamId:     { type: Type.STRING },
-    resultSets:     { type: Type.STRING },
-    totalPoints:    { 
-      type: Type.STRING, 
-      description: "Das Verhältnis der Punkte (Heim:Gast), z.B. '75:58'. NICHT die Summe aller Punkte." 
-    },
-    setPoints:      { type: Type.STRING },
-    matchDuration:  { type: Type.STRING },
-    matchId:        { type: Type.STRING },
-    venueName:      { type: Type.STRING },
-    locationId:     { type: Type.STRING },
-    samsScoreUuid:  { type: Type.STRING },
-    mvpHomeName:    { type: Type.STRING },
-    mvpHomeUserId:  { type: Type.STRING },
-    mvpAwayName:    { type: Type.STRING },
-    mvpAwayUserId:  { type: Type.STRING },
-    spectators:     { type: Type.STRING },
-    youtubeUrl:     { type: Type.STRING },
-    logs: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: "Fortschritts-Logs für den Nutzer",
-    },
-  },
-  required: ["matchNumber", "homeTeam", "awayTeam"],
-};
-
-// ─────────────────────────────────────────────
 // PHASE 2: Hauptdaten extrahieren
 // ─────────────────────────────────────────────
 async function extractMatchData(
@@ -613,122 +577,20 @@ async function extractMatchData(
     onStatusUpdate?.(`Analysiere Spieldaten für #${matchNumber}...`);
   }
 
-  let stream;
-  try {
-    const modelToUse = manualMatchId ? MODEL_SMART : MODEL_FAST;
-    
-    stream = await ai.models.generateContentStream({
-      model: modelToUse,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        toolConfig: { includeServerSideToolInvocations: true },
-        responseMimeType: "application/json",
-        responseSchema: matchSchema,
-        systemInstruction:
-          manualMatchId 
-            ? `Du bist ein präziser Daten-Extraktor. 
-               WICHTIG: Du MUSST das Tool 'googleSearch' aufrufen, um die Seite ${mainUrl} zu lesen. 
-               Extrahiere die Daten EXAKT so, wie sie auf der Seite stehen. 
-               Halluziniere KEINE Daten. Wenn ein Feld nicht auf der Seite zu finden ist, lasse es leer ("").
-               Antworte ausschließlich mit validem JSON gemäß Schema.`
-            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. 
-               Nutze das Tool 'googleSearch' um die Daten zu verifizieren. 
-               Halluziniere KEINE Daten. Wenn ein Feld nicht gefunden werden kann, lasse es leer ("").
-               Antworte ausschließlich mit validem JSON gemäß Schema.`,
-      },
-    });
-  } catch (e: any) {
-    if (e.message?.includes("404") || e.message?.includes("NOT_FOUND") || e.message?.includes("Browse tool")) {
-      console.warn("Primary models or tools not supported, falling back to gemini-3-flash-preview...", e);
-      onStatusUpdate?.("⚠️ Standard-Modelle oder Tools nicht verfügbar. Nutze Ausweich-Modell...");
-      stream = await ai.models.generateContentStream({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          responseMimeType: "application/json",
-          responseSchema: matchSchema,
-          systemInstruction: manualMatchId 
-            ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels googleSearch. Antworte ausschließlich mit validem JSON gemäß Schema.`
-            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema.`,
-        },
-      });
-    } else {
-      console.warn("MODEL_FAST failed to start stream, trying MODEL_SMART...", e);
-      onStatusUpdate?.("⚠️ Verbindung zum Standard-Modell unterbrochen. Nutze Pro-Modell...");
-      stream = await ai.models.generateContentStream({
-        model: MODEL_SMART,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          responseMimeType: "application/json",
-          responseSchema: matchSchema,
-          systemInstruction:
-            manualMatchId 
-              ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels googleSearch. Antworte ausschließlich mit validem JSON gemäß Schema.`
-              : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Nutze das Tool 'googleSearch' um die Daten zu verifizieren. WICHTIG: Erzeuge am Ende IMMER das vollständige JSON-Objekt, auch wenn Daten fehlen.`,
-        },
-      });
-    }
-  }
+  onStatusUpdate?.("Sende Datenextraktion an sichere Server-API...");
 
-  let fullText = "";
-  let lastLogCount = 0;
+let fullText = "";
 
-  try {
-    for await (const chunk of stream) {
-      if (chunk.candidates?.[0]?.finishReason === "SAFETY") {
-        throw new Error("KI-Sicherheitsblockade.");
-      }
-      if (chunk.text) fullText += chunk.text;
-
-      // Live-Logs aus Partial-JSON
-      try {
-        const logsMatch = fullText.match(/"logs":\s*\[([\s\S]*?)\]/);
-        if (logsMatch) {
-          const logs = logsMatch[1]
-            .split(",")
-            .map((s) => s.trim().replace(/^"|"$/g, ""))
-            .filter((s) => s.length > 2);
-          for (let i = lastLogCount; i < logs.length; i++) {
-            onStatusUpdate?.(logs[i]);
-          }
-          lastLogCount = logs.length;
-        }
-      } catch {
-        // Partial-JSON Fehler ignorieren
-      }
-    }
-  } catch (e: any) {
-    if (e.message?.includes("SAFETY")) throw e;
-    console.warn("Stream processing failed, retrying with MODEL_SMART...", e);
-    onStatusUpdate?.("⚠️ Datenextraktion verzögert. Starte zweiten Versuch mit Pro-Modell...");
-    
-    // Reset and retry with Pro
-    fullText = "";
-    lastLogCount = 0;
-    const proStream = await ai.models.generateContentStream({
-      model: MODEL_SMART,
-      contents: prompt,
-      config: {
-        tools: manualMatchId ? [{ urlContext: {} }] : [{ urlContext: {} }, { googleSearch: {} }],
-        toolConfig: { includeServerSideToolInvocations: true },
-        responseMimeType: "application/json",
-        responseSchema: matchSchema,
-        systemInstruction:
-          manualMatchId 
-            ? `Du bist ein präziser Daten-Extraktor. Extrahiere Daten NUR von der URL ${mainUrl} mittels urlContext. Antworte ausschließlich mit validem JSON gemäß Schema.`
-            : `Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Nutze die Tools (urlContext, googleSearch) um die Daten zu verifizieren. WICHTIG: Erzeuge am Ende IMMER das vollständige JSON-Objekt, auch wenn Daten fehlen.`,
-      },
-    });
-    
-    for await (const chunk of proStream) {
-      if (chunk.text) fullText += chunk.text;
-    }
-  }
+try {
+  fullText = await callGeminiApi("extract_match_data", prompt);
+  onStatusUpdate?.("Antwort erhalten. Werte Daten aus...");
+} catch (e: any) {
+  console.warn("Server-side Gemini extraction failed:", e);
+  onStatusUpdate?.("❌ KI-Datenextraktion fehlgeschlagen.");
+  throw new Error(
+    e?.message || "Keine Antwort von Gemini. Möglicherweise konnte die Seite nicht gelesen werden."
+  );
+}
 
   if (!fullText.trim()) {
     console.error("Gemini returned empty response for matchId:", matchId);
