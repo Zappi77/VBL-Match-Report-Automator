@@ -41,7 +41,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
             >
               Seite neu laden
             </button>
-            {this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <pre className="mt-6 p-4 bg-gray-50 rounded-xl text-[10px] text-left overflow-auto max-h-40 text-gray-400">
                 {typeof this.state.error === 'string' ? this.state.error : JSON.stringify(this.state.error, null, 2)}
               </pre>
@@ -70,6 +70,53 @@ async function testConnection() {
   }
 }
 testConnection();
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const toSafeHref = (value: string): string | null => {
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return escapeHtml(url.href);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
+
+const markdownParagraphToSafeHtml = (paragraph: string): string => {
+  const parts: string[] = [];
+  const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = linkPattern.exec(paragraph)) !== null) {
+    parts.push(escapeHtml(paragraph.slice(lastIndex, match.index)));
+
+    const safeHref = toSafeHref(match[2].trim());
+    const label = escapeHtml(match[1]);
+
+    parts.push(
+      safeHref
+        ? `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${label}</a>`
+        : label
+    );
+
+    lastIndex = linkPattern.lastIndex;
+  }
+
+  parts.push(escapeHtml(paragraph.slice(lastIndex)));
+
+  return parts.join("").replace(/\n/g, "<br>\n");
+};
 
 export default function App() {
   return (
@@ -146,7 +193,7 @@ function AppContent() {
       setLastSync(new Date());
     }, (err) => {
       console.error("Firestore Sync Error:", err);
-      setDbError(err.message);
+      setDbError("Datenbank-Synchronisierung fehlgeschlagen.");
       setIsDbLoading(false);
       
       // Fallback: If snapshot fails, try a one-time getDocs
@@ -383,16 +430,9 @@ function AppContent() {
   };
 
   const copyAsHtml = () => {
-    // Basic conversion of markdown links to HTML for WordPress
     const html = report
-      .split("\n\n") // Split by double line breaks for paragraphs
-      .map(paragraph => {
-        // Replace [Text](Link) with <a href="Link" target="_blank" rel="noopener noreferrer">Text</a>
-        let processed = paragraph.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-        // Replace single line breaks within paragraph with <br>
-        processed = processed.replace(/\n/g, "<br>\n");
-        return `<p>${processed}</p>`;
-      })
+      .split("\n\n")
+      .map((paragraph) => `<p>${markdownParagraphToSafeHtml(paragraph)}</p>`)
       .join("\n");
     
     navigator.clipboard.writeText(html);
@@ -576,7 +616,7 @@ function AppContent() {
                       setDbMatchNumbers(snap.docs.map(d => d.id));
                       setDbError(null);
                     } catch (e: any) {
-                      setDbError(e.message);
+                      setDbError("Datenbank-Aktualisierung fehlgeschlagen.");
                     } finally {
                       setIsDbLoading(false);
                     }

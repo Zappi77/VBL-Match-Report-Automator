@@ -62,9 +62,16 @@ async function callGeminiApi(
   mode: GeminiApiMode,
   prompt: string
 ): Promise<string> {
+  const token = await auth.currentUser?.getIdToken();
+
+  if (!token) {
+    throw new Error("Bitte melde dich als Admin an, um die KI-Generierung zu nutzen.");
+  }
+
   const response = await fetch("/api/gemini", {
     method: "POST",
     headers: {
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ mode, prompt }),
@@ -258,53 +265,29 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  let message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
   
   // Spezielle Behandlung für Offline-Fehler
   if (message.includes("client is offline")) {
-    message = "Verbindung zu Firestore fehlgeschlagen (Client ist offline). Bitte prüfe deine Internetverbindung oder lade die Seite neu.";
+    throw new Error("Verbindung zu Firestore fehlgeschlagen. Bitte prüfe deine Internetverbindung oder lade die Seite neu.");
   }
 
-  const errInfo: FirestoreErrorInfo = {
+  const errInfo = {
     error: message,
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
       providerInfo: auth.currentUser?.providerData.map(provider => ({
         providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
       })) || []
     },
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.error('Firestore Error: ', errInfo);
+  throw new Error("Datenbankzugriff fehlgeschlagen. Bitte versuche es erneut.");
 }
 
 function logFirestoreError(error: unknown, operation: string, path: string) {
