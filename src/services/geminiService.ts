@@ -60,21 +60,24 @@ type GeminiApiMode =
 
 async function callGeminiApi(
   mode: GeminiApiMode,
-  prompt: string
+  prompt: string,
+  sourceUrl?: string
 ): Promise<string> {
-  const token = await auth.currentUser?.getIdToken();
+  const user = auth.currentUser;
 
-  if (!token) {
-    throw new Error("Bitte melde dich als Admin an, um die KI-Generierung zu nutzen.");
+  if (!user) {
+    throw new Error("Bitte zuerst mit Google anmelden.");
   }
+
+  const tokenResult = await user.getIdTokenResult(true);
 
   const response = await fetch("/api/gemini", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      Authorization: `Bearer ${tokenResult.token}`,
     },
-    body: JSON.stringify({ mode, prompt }),
+    body: JSON.stringify({ mode, prompt, sourceUrl }),
   });
 
   const data = await response.json().catch(() => null);
@@ -265,29 +268,53 @@ enum OperationType {
   WRITE = 'write',
 }
 
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const message = error instanceof Error ? error.message : String(error);
+  let message = error instanceof Error ? error.message : String(error);
   
   // Spezielle Behandlung für Offline-Fehler
   if (message.includes("client is offline")) {
-    throw new Error("Verbindung zu Firestore fehlgeschlagen. Bitte prüfe deine Internetverbindung oder lade die Seite neu.");
+    message = "Verbindung zu Firestore fehlgeschlagen (Client ist offline). Bitte prüfe deine Internetverbindung oder lade die Seite neu.";
   }
 
-  const errInfo = {
+  const errInfo: FirestoreErrorInfo = {
     error: message,
     authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
       providerInfo: auth.currentUser?.providerData.map(provider => ({
         providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
       })) || []
     },
     operationType,
     path
   }
-  console.error('Firestore Error: ', errInfo);
-  throw new Error("Datenbankzugriff fehlgeschlagen. Bitte versuche es erneut.");
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 function logFirestoreError(error: unknown, operation: string, path: string) {
@@ -462,11 +489,11 @@ async function extractMatchData(
     
     AUFGABE: Extrahiere die Spieldaten für Spiel #${matchNumber}.
     
-    WICHTIG: Du MUSST das Tool 'googleSearch' aufrufen, um die Seite ${mainUrl} zu lesen.
+    WICHTIG: Die Match-ID ist bekannt. Die Zielseite ist eindeutig. Verwende ausschließlich die bereitgestellte VBL-Detailseite als Quelle. Suche nicht im Web.
     
     ANLEITUNG:
-    1. Rufe 'googleSearch' für ${mainUrl} auf.
-    2. Suche im Text nach dem Ergebnis (Sätze, Punkte), den MVPs und der Spieldauer.
+    1. Die Server-API ruft die VBL-Detailseite direkt ab und übergibt das HTML an Gemini.
+    2. Suche im HTML nach dem Ergebnis (Sätze, Punkte), den MVPs und der Spieldauer.
     3. Identifiziere Heim- und Gastteam (Reihenfolge auf der Seite beachten).
     4. Antworte ausschließlich mit validem JSON gemäß Schema.
     
@@ -493,7 +520,7 @@ async function extractMatchData(
        - WICHTIG: Die Gesamtpunkte (totalPoints) sind das Verhältnis der Punkte (Heim:Gast), z.B. 75:58. NICHT die Summe.
        - HINWEIS: Die Teamnamen stehen oft in der Hauptüberschrift (H2) der Seite oder in den Links zu den Mannschaftsseiten.
        - HINWEIS: Nutze die CSS-Klasse 'samsMatchSubResult' im HTML um die Satzpunkte EXAKT zu finden. Das Endergebnis steht oft in 'samsMatchResult'.
-       - ${manualMatchId || selectedTeamId ? "Die Teams müssen auf der Seite gefunden werden. Verifiziere, dass eines der Teams zum erwarteten Team passt." : "Falls die Teams nicht explizit genannt werden, nutze Google Search."}
+       - Die Teams müssen auf der übergebenen VBL-Detailseite gefunden werden. Verifiziere, dass eines der Teams zum erwarteten Team passt, falls ein erwartetes Team angegeben ist.
     
     2. SPIELDAUER (Zeile 3):
        - HTML: Suche nach dem Text "Spieldauer:" in einer Tabelle.
@@ -540,7 +567,7 @@ async function extractMatchData(
     - Falls auf der Seite eine ANDERE matchId steht (z.B. bei "Nächstes Spiel"), IGNORIERE diese.
     - matchId darf NIEMALS die Spielnummer ${matchNumber} sein.
     - Alle IDs (locationId, userId, teamId) müssen EXAKT aus den Links der Seite extrahiert werden.
-    - Falls ein Link nicht eindeutig ist, nutze Google Search zur Verifizierung.
+    - Falls ein Link nicht eindeutig ist, lasse das entsprechende Feld leer. Suche nicht im Web.
     - Wenn UUID nicht gefunden: leerer String (kein Platzhalter)
     - Bei userId: NUR die Zahl, keine URL
     - Logs: Schreibe für jeden gefundenen Wert einen Eintrag (z.B. "Zuschauer gefunden: 150", "Datum gefunden: 28.03.2026")
@@ -565,7 +592,7 @@ async function extractMatchData(
 let fullText = "";
 
 try {
-  fullText = await callGeminiApi("extract_match_data", prompt);
+  fullText = await callGeminiApi("extract_match_data", prompt, mainUrl);
   onStatusUpdate?.("Antwort erhalten. Werte Daten aus...");
 } catch (e: any) {
   console.warn("Server-side Gemini extraction failed:", e);
