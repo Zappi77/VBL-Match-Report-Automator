@@ -6,6 +6,7 @@ const MODEL_SMART = "gemini-2.5-flash";
 
 const MAX_PROMPT_LENGTH = 20000;
 const DEFAULT_ALLOWED_ORIGIN = "https://vbl-match-report-automator.vercel.app";
+const MAX_VBL_HTML_LENGTH = 120000;
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -93,6 +94,64 @@ async function requireAdmin(req: VercelRequest): Promise<void> {
   if (claims.admin !== true) {
     throw new Error("Admin access required.");
   }
+}
+
+function getSourceUrl(req: VercelRequest): string {
+  const sourceUrl = req.body?.sourceUrl;
+
+  if (!sourceUrl || typeof sourceUrl !== "string") {
+    throw new Error("Missing sourceUrl.");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    throw new Error("Invalid sourceUrl.");
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error("Invalid sourceUrl protocol.");
+  }
+
+  if (url.hostname !== "www.volleyball-bundesliga.de") {
+    throw new Error("Invalid sourceUrl host.");
+  }
+
+  if (!url.pathname.includes("/popup/matchSeries/matchDetails.xhtml")) {
+    throw new Error("Invalid sourceUrl path.");
+  }
+
+  if (!url.searchParams.get("matchId")) {
+    throw new Error("Missing matchId in sourceUrl.");
+  }
+
+  return url.toString();
+}
+
+async function fetchVblHtml(url: string): Promise<string> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (compatible; VBL-Match-Report-Automator/1.0)",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`VBL page request failed with status ${response.status}`);
+  }
+
+  return response.text();
+}
+
+function compactHtmlForGemini(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_VBL_HTML_LENGTH);
 }
 
 const matchSchema = {
@@ -233,13 +292,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (mode === "extract_match_data") {
+      const sourceUrl = getSourceUrl(req);
+      const html = await fetchVblHtml(sourceUrl);
+      const htmlForGemini = compactHtmlForGemini(html);
+
       const response = await ai.models.generateContent({
         model: MODEL_SMART,
-        contents: prompt,
+        contents: `${prompt}\n\nQUELLSEITE:\n${sourceUrl}\n\nHTML DER VBL-SEITE:\n${htmlForGemini}`,
         config: {
-          tools: [{ urlContext: {} }, { googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: matchSchema,
           systemInstruction:
-            "Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Halluziniere keine Daten.",
+            "Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Du erhältst HTML einer konkreten VBL-Spielseite. Antworte ausschließlich mit validem JSON gemäß Schema. Keine Markdown-Codeblöcke. Keine Erklärungen. Leere Felder = leerer String. Halluziniere keine Daten.",
         },
       });
 
