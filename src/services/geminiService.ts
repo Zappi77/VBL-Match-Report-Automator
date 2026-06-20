@@ -62,10 +62,26 @@ async function callGeminiApi(
   mode: GeminiApiMode,
   prompt: string
 ): Promise<string> {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("Bitte zuerst mit Google anmelden.");
+  }
+
+  const tokenResult = await user.getIdTokenResult(true);
+
+  console.log("Firebase current user:", {
+    uid: user.uid,
+    email: user.email,
+  });
+
+  console.log("Firebase token claims:", tokenResult.claims);
+
   const response = await fetch("/api/gemini", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${tokenResult.token}`,
     },
     body: JSON.stringify({ mode, prompt }),
   });
