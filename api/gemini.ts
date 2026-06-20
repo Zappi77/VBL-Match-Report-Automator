@@ -1,12 +1,76 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI, Type } from "@google/genai";
+
+type ApiRequest = {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+  body?: {
+    mode?: unknown;
+    prompt?: unknown;
+  };
+};
+
+type ApiResponse = {
+  setHeader(name: string, value: string): void;
+  status(code: number): {
+    json(body: unknown): void;
+  };
+};
 
 const MODEL_FAST = "gemini-3-flash-preview";
 const MODEL_SMART = "gemini-3.1-pro-preview";
+const MAX_PROMPT_LENGTH = 20000;
+const DEFAULT_ALLOWED_ORIGIN = "https://vbl-match-report-automator.vercel.app";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
+
+function getHeader(req: ApiRequest, name: string): string {
+  const value = req.headers[name.toLowerCase()] || req.headers[name];
+
+  if (Array.isArray(value)) {
+    return value[0] || "";
+  }
+
+  return value || "";
+}
+
+async function requireAdmin(req: ApiRequest): Promise<void> {
+  const authorization = getHeader(req, "authorization");
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+
+  if (!token) {
+    throw new Error("Missing authorization token.");
+  }
+
+  const apiKey = process.env.FIREBASE_WEB_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+  if (!apiKey) {
+    throw new Error("Firebase Auth API key is not configured.");
+  }
+
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ idToken: token }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Invalid authorization token.");
+  }
+
+  const data = await response.json();
+  const customAttributes = data?.users?.[0]?.customAttributes;
+  const claims = customAttributes ? JSON.parse(customAttributes) : {};
+
+  if (claims.admin !== true) {
+    throw new Error("Admin access required.");
+  }
+}
 
 const matchSchema = {
   type: Type.OBJECT,
@@ -46,43 +110,92 @@ type GeminiMode =
   | "resolve_match_id_google_search"
   | "extract_match_data";
 
-function getPrompt(req: VercelRequest): string {
+const allowedModes: GeminiMode[] = [
+  "resolve_match_id_url_context",
+  "resolve_match_id_google_search",
+  "extract_match_data",
+];
+
+function getPrompt(req: ApiRequest): string {
   const prompt = req.body?.prompt;
 
   if (!prompt || typeof prompt !== "string") {
     throw new Error("Missing prompt.");
   }
 
-  if (prompt.length > 20000) {
+  if (prompt.length > MAX_PROMPT_LENGTH) {
     throw new Error("Prompt too large.");
   }
 
-  return prompt;
+  return prompt.trim();
 }
 
-function getMode(req: VercelRequest): GeminiMode {
+function getMode(req: ApiRequest): GeminiMode {
   const mode = req.body?.mode;
 
-  const allowedModes: GeminiMode[] = [
-    "resolve_match_id_url_context",
-    "resolve_match_id_google_search",
-    "extract_match_data",
-  ];
-
-  if (!allowedModes.includes(mode)) {
+  if (typeof mode !== "string" || !allowedModes.includes(mode as GeminiMode)) {
     throw new Error("Invalid mode.");
   }
 
-  return mode;
+  return mode as GeminiMode;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+function getAllowedOrigins(): string[] {
+  const configuredOrigins = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const vercelOrigin = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "";
+
+  return Array.from(
+    new Set([DEFAULT_ALLOWED_ORIGIN, vercelOrigin, ...configuredOrigins].filter(Boolean))
+  );
+}
+
+function isAllowedOrigin(req: ApiRequest): boolean {
+  const origin = getHeader(req, "origin");
+
+  if (!origin) {
+    return true;
+  }
+
+  return typeof origin === "string" && getAllowedOrigins().includes(origin);
+}
+
+function setApiSecurityHeaders(res: ApiResponse) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+}
+
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+  setApiSecurityHeaders(res);
+
+  if (!isAllowedOrigin(req)) {
+    return res.status(403).json({ error: "Forbidden origin." });
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed." });
   }
 
+  const contentType = req.headers["content-type"] || "";
+  if (!String(contentType).toLowerCase().includes("application/json")) {
+    return res.status(415).json({ error: "Content-Type must be application/json." });
+  }
+
   if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({ error: "Gemini API key is not configured." });
+  }
+
+  try {
+    await requireAdmin(req);
+  } catch (error) {
+    console.warn("Gemini API unauthorized request:", error);
+    return res.status(403).json({ error: "Admin access required." });
   }
 
   let prompt: string;
