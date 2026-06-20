@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import { auth, db } from "./firebase";
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc, getDocs, getDocFromServer } from "firebase/firestore";
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { SpeedInsights } from "@vercel/speed-insights/next"
 
 
 
@@ -122,6 +123,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AppContent />
+      <SpeedInsights />
     </ErrorBoundary>
   );
 }
