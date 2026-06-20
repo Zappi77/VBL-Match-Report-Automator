@@ -8,7 +8,7 @@ Ein Tool zur strukturierten Erstellung von Spielberichten für die **Sparda 2. L
 
 Der VBL Match Report Automator unterstützt Pressewarte und Vereinsteams dabei, relevante Spieldaten schneller zu erfassen, zu prüfen und in wiederverwendbare Berichtsformate zu überführen.
 
-Die App ruft Spieldaten aus öffentlich verfügbaren Quellen der Volleyball Bundesliga ab, ergänzt diese über Google Gemini und erzeugt daraus Spielberichte im Markdown- und Gutenberg-HTML-Format.
+Die App nutzt öffentlich verfügbare Quellen der Volleyball Bundesliga, Firebase Authentication, Firestore und Google Gemini. KI- und Scraping-nahe Verarbeitung läuft über serverseitige Vercel API Routes, damit sensible API-Schlüssel nicht im Browser ausgeliefert werden.
 
 ---
 
@@ -16,41 +16,46 @@ Die App ruft Spieldaten aus öffentlich verfügbaren Quellen der Volleyball Bund
 
 - Automatische Spielberichts-Erstellung mit Google Gemini
 - Abruf und Strukturierung von Spieldaten, Ergebnissen, Satzständen, MVPs und Spielorten
+- Server-seitiger Abruf konkreter VBL-Matchseiten, sobald die `matchId` bekannt ist
 - Validierungsmaske zur manuellen Prüfung und Korrektur der extrahierten Daten
 - Speicherung geprüfter Matchdaten in Firebase Firestore
 - Export als Markdown
 - Export als Gutenberg-kompatibles HTML für WordPress
 - Google Login mit Admin-Modus
-- Server-seitige Gemini-Anbindung über Vercel API Route
+- Geschützte Gemini API Route mit Firebase-ID-Token-Prüfung
 
 ---
 
 ## Architektur
 
-Die Anwendung besteht aus einem React/Vite-Frontend und einer serverseitigen Vercel API Route für KI-Aufrufe.
+Die Anwendung besteht aus einem React/Vite-Frontend und serverseitigen Vercel API Routes.
 
 ```text
 Browser / React-App
-  -> /api/gemini
-      -> Google Gemini API
-
-Browser / React-App
   -> Firebase Authentication
   -> Firebase Firestore
+  -> /api/gemini
+      -> Firebase Auth Tokenprüfung
+      -> VBL-Matchseite serverseitig abrufen
+      -> Google Gemini API
 ```
 
 Der Gemini API Key wird **nicht** im Browser ausgeliefert.
 
-Wichtig:
+Sobald eine `matchId` bekannt ist, ist die VBL-Detailseite eindeutig. Die Serverroute ruft diese Seite direkt ab und übergibt den HTML-Inhalt an Gemini zur strukturierten Extraktion.
 
 ```text
-GEMINI_API_KEY        serverseitig, nicht öffentlich
-VITE_FIREBASE_*       clientseitige Firebase-Web-Konfiguration
+matchId bekannt
+  -> VBL-Detail-URL fest ableitbar
+  -> Server fetch() auf VBL-Seite
+  -> Gemini extrahiert JSON aus dem HTML
 ```
 
 ---
 
-## Security-Hinweis
+## Security-Hinweise
+
+### Gemini API Key
 
 Der Gemini API Key darf nicht mit dem Präfix `VITE_` verwendet werden.
 
@@ -67,6 +72,34 @@ GEMINI_API_KEY=...
 ```
 
 Der Key wird ausschließlich serverseitig in der Vercel API Route genutzt.
+
+### Firebase Web-Konfiguration
+
+Firebase-Web-Konfigurationswerte mit `VITE_FIREBASE_*` sind clientseitig sichtbar. Das ist bei Firebase grundsätzlich erwartbar. Die Zugriffskontrolle erfolgt über Firebase Authentication, Firestore Security Rules und serverseitige Prüfungen.
+
+### Firebase Server API Key
+
+Für die serverseitige Admin-Validierung kann ein separater Firebase/Identity-Toolkit API Key verwendet werden:
+
+```env
+FIREBASE_SERVER_API_KEY=...
+```
+
+Dieser Key sollte **nicht** per HTTP-Referrer eingeschränkt sein, weil serverseitige Vercel-Requests keinen Browser-Referrer haben. Er sollte stattdessen auf die benötigte API eingeschränkt werden, zum Beispiel auf:
+
+```text
+Identity Toolkit API
+```
+
+### Admin-Prüfung
+
+Die Gemini API Route erwartet einen Firebase ID Token im `Authorization` Header. Nur Nutzer mit Custom Claim
+
+```json
+{ "admin": true }
+```
+
+dürfen KI-Extraktionen auslösen.
 
 ---
 
@@ -92,6 +125,7 @@ Für die lokale Entwicklung werden benötigt:
 - Vercel CLI über `npx`
 - Firebase-Projekt mit Authentication und Firestore
 - Gemini API Key aus Google AI Studio oder Google Cloud Console
+- Firebase/Identity-Toolkit API Key für serverseitige Tokenprüfung
 
 ---
 
@@ -125,6 +159,13 @@ Beispiel:
 ```env
 # Server-side only. Never expose this with VITE_.
 GEMINI_API_KEY="your_gemini_api_key"
+
+# Server-side Firebase Auth / Identity Toolkit key.
+# This key is used by /api/gemini to validate Firebase ID tokens.
+FIREBASE_SERVER_API_KEY="your_firebase_identity_toolkit_api_key"
+
+# Optional: comma-separated list of allowed origins for /api/gemini.
+ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"
 
 # Firebase web config. These values are allowed to be visible in the browser.
 VITE_FIREBASE_API_KEY="your_firebase_api_key"
@@ -177,13 +218,15 @@ Vor einem Deployment sollten mindestens folgende Fälle geprüft werden:
 ```text
 bekannte Spielnummer
 Spiel aus Firestore
-unbekannte Spielnummer mit KI-Suche
+unbekannte Spielnummer mit KI-gestützter matchId-Auflösung
 manuelle Match-ID
+serverseitiger Abruf der VBL-Matchseite
 Markdown-Export
 Gutenberg-HTML-Export
 Admin-Login
 Firestore-Speicherung als Admin
 Nicht-Admin ohne Schreibrechte
+kein Gemini-Key im Browser-Bundle
 ```
 
 ---
@@ -192,13 +235,25 @@ Nicht-Admin ohne Schreibrechte
 
 Die App ist für Vercel ausgelegt.
 
-Erforderliche Environment Variable in Vercel:
+Erforderliche Environment Variables in Vercel:
 
 ```env
 GEMINI_API_KEY=...
+FIREBASE_SERVER_API_KEY=...
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_DATABASE_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
 ```
 
-Zusätzlich müssen die Firebase-Web-Konfigurationswerte als `VITE_FIREBASE_*` Variablen gesetzt werden.
+Optional:
+
+```env
+ALLOWED_ORIGINS=...
+```
 
 Empfohlene Umgebungen:
 
@@ -214,55 +269,27 @@ Mindestens erforderlich für die Live-App:
 Production
 ```
 
+Nach Änderungen an Environment Variables muss Vercel neu deployt werden.
+
+---
+
+## Hinweise zur VBL-Datenextraktion
+
+Die App versucht zunächst, vorhandene Daten aus Firestore oder Saison-Stammdaten zu verwenden.
+
+Wenn eine `matchId` bekannt ist, wird die konkrete VBL-Detailseite serverseitig abgerufen. Dadurch muss Gemini nicht mehr selbst im Web suchen, sondern erhält den HTML-Inhalt der Zielseite zur Extraktion.
+
+Das reduziert:
+
+```text
+Browser-CORS-Probleme
+unnötige Gemini-Tool-Aufrufe
+Fehler durch Google Search / URL Context
+Quota-Verbrauch
+```
+
 ---
 
 ## Live Demo
 
-https://vbl-match-report-automator.vercel.app
-
----
-
-## Sicherheit nach Deployment prüfen
-
-Nach dem Deployment sollte geprüft werden, dass kein Gemini-Key im Browser sichtbar ist.
-
-Im Browser DevTools suchen nach:
-
-```text
-VITE_GEMINI_API_KEY
-GEMINI_API_KEY
-GoogleGenAI
-AIza
-```
-
-Erwartung:
-
-```text
-kein Gemini API Key im Browser-Bundle
-Gemini-Aufrufe laufen über /api/gemini
-```
-
-Im Network Tab sollte bei der Berichtsgenerierung ein Request an die eigene API Route sichtbar sein:
-
-```text
-POST /api/gemini
-```
-
----
-
-## Hinweise zu Firebase
-
-Firebase-Web-Konfigurationswerte sind nicht geheim im klassischen Sinne. Die Absicherung erfolgt über:
-
-- Firebase Authentication
-- Firestore Security Rules
-- Rollen-/Admin-Prüfung
-- optional Firebase App Check
-
-Schreib- und Löschrechte sollten nicht allein im Frontend geprüft werden, sondern über Firestore Security Rules abgesichert sein.
-
----
-
-## Projektstatus
-
-Dieses Projekt ist ein spezialisiertes Arbeitstool für die Vereins- und Sportkommunikation im Volleyball. Der Fokus liegt auf effizienter Datenerfassung, nachvollziehbarer Validierung und wiederverwendbaren Exportformaten für die Pressearbeit.
+[vbl-match-report-automator.vercel.app](https://vbl-match-report-automator.vercel.app)
