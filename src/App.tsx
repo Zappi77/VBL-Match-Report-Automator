@@ -1,4 +1,5 @@
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
+import { ImpressumPage, DatenschutzPage } from "./legal";
 import { fetchMatchDataFull, saveMatchData, getMatchReport, matchCache, buildReport, saveReport, deleteMatchEntry } from "./services/geminiService";
 import { SEASON_MATCHES, KNOWN_TEAMS, type MatchReference } from "./data/vblData";
 import { Loader2, Copy, Check, Volleyball, Search, ExternalLink, Code, RefreshCw, Youtube, FileText, Layout, Info, AlertCircle, Database, Users, LogIn, LogOut, ShieldCheck, Save, Edit3, X } from "lucide-react";
@@ -36,7 +37,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
             <p className="text-sm text-gray-600 mb-6">
               Ein unerwarteter Fehler ist aufgetreten. Bitte lade die Seite neu.
             </p>
-            <button 
+            <button
               onClick={() => window.location.reload()}
               className="bg-[#5A5A40] text-white py-3 px-6 rounded-2xl font-bold hover:bg-[#4A4A30] transition-all"
             >
@@ -184,7 +185,7 @@ function AppContent() {
 
   useEffect(() => {
     if (!isAuthReady) return;
-    
+
     const q = query(collection(db, "matches"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const numbers = snapshot.docs.map(doc => doc.id);
@@ -197,7 +198,7 @@ function AppContent() {
       console.error("Firestore Sync Error:", err);
       setDbError("Datenbank-Synchronisierung fehlgeschlagen.");
       setIsDbLoading(false);
-      
+
       // Fallback: If snapshot fails, try a one-time getDocs
       getDocs(q).then(snap => {
         setDbMatchNumbers(snap.docs.map(d => d.id));
@@ -206,7 +207,7 @@ function AppContent() {
         console.error("Fallback getDocs failed:", e);
       });
     });
-    
+
     return () => unsubscribe();
   }, [isAuthReady, user]); // Add user to dependencies to restart listener on auth change
 
@@ -233,12 +234,12 @@ function AppContent() {
     setForceRefresh(true);
     // Clear the in-memory cache
     Object.keys(matchCache).forEach(key => delete matchCache[key]);
-    
+
     // Reset UI state
     setReport("");
     setLogs(["Cache geleert. Nächste Generierung erfolgt live..."]);
     setError("");
-    
+
     // Visual feedback delay
     setTimeout(() => {
       setIsRefreshing(false);
@@ -269,7 +270,7 @@ function AppContent() {
         const msg = "Die Suche dauert zu lange (Timeout nach 120s). Du kannst die Daten nun manuell eingeben.";
         setError(msg);
         setLogs(prev => [...prev, `⚠️ ${msg}`]);
-        
+
         // Fallback-Daten setzen, damit die Maske aufgeht
         const fallbackData: MatchReference = {
           matchId: manualMatchId || "",
@@ -291,38 +292,38 @@ function AppContent() {
 
     try {
       const data = await fetchMatchDataFull(
-        matchNumber, 
+        matchNumber,
         (newStatus) => {
           setLogs(prev => {
             if (prev[prev.length - 1] === newStatus) return prev;
             return [...prev, newStatus];
           });
-        }, 
-        forceRefresh, 
-        selectedTeamId, 
+        },
+        forceRefresh,
+        selectedTeamId,
         manualMatchId,
         manualDate,
         manualTime,
         manualWeekday
       );
-      
+
       console.log("Raw extracted data:", data);
-      
+
       if (!isRequestActive) return; // Timeout ist bereits eingetreten
       isRequestActive = false;
       clearTimeout(timeoutId);
       setForceRefresh(false);
-      
+
       if (data) {
         setPreviewData(data);
-        
+
         // Wenn Daten aus DB kommen und KEIN Admin-Modus: Direkt Bericht bauen
         if (data.fromDb && !isAdmin) {
           setLogs(prev => [...prev, "Daten aus Master-Datenbank geladen. Überspringe Validierung..."]);
           const result = buildReport(data as any, matchNumber);
           const cleanReport = result.replace(/^```[a-z]*\n/i, "").replace(/\n```$/i, "").trim();
           setReport(cleanReport);
-          
+
           setTimeout(() => {
             document.getElementById("result-section")?.scrollIntoView({ behavior: "smooth" });
           }, 100);
@@ -334,11 +335,11 @@ function AppContent() {
       isRequestActive = false;
       clearTimeout(timeoutId);
       console.error(err);
-      
+
       const errorMsg = err.message || "Ein Fehler ist aufgetreten.";
       setError(errorMsg);
       setLogs(prev => [...prev, `❌ ${errorMsg}`]);
-      
+
       // Bei Extraktionsfehlern: Maske trotzdem öffnen
       if (errorMsg.includes("Keine Antwort von Gemini") || errorMsg.includes("Extraktion") || errorMsg.includes("Timeout")) {
         setLogs(prev => [...prev, "Öffne manuelle Eingabemaske..."]);
@@ -357,7 +358,7 @@ function AppContent() {
         const staticData = SEASON_MATCHES[matchNumber];
         setPreviewData(staticData ? { ...fallbackData, ...staticData } : fallbackData);
       }
-      
+
       delete matchCache[matchNumber];
     } finally {
       setLoading(false);
@@ -382,7 +383,7 @@ function AppContent() {
         setSaveSuccess(true);
         setLogs(prev => [...prev, "✅ Daten erfolgreich in Master-Datenbank gespeichert."]);
       }
-      
+
       // Scroll to result
       setTimeout(() => {
         document.getElementById("result-section")?.scrollIntoView({ behavior: "smooth" });
@@ -399,13 +400,13 @@ function AppContent() {
   const handleDeleteEntry = async () => {
     const targetNumber = deleteMatchNumber || matchNumber;
     if (!isAdmin || !targetNumber) return;
-    
+
     if (!isDeleteConfirming) {
       setIsDeleteConfirming(true);
       setTimeout(() => setIsDeleteConfirming(false), 3000); // Reset after 3 seconds
       return;
     }
-    
+
     setLoading(true);
     setLogs([`Lösche Spiel #${targetNumber}...`]);
     try {
@@ -436,7 +437,7 @@ function AppContent() {
       .split("\n\n")
       .map((paragraph) => `<p>${markdownParagraphToSafeHtml(paragraph)}</p>`)
       .join("\n");
-    
+
     navigator.clipboard.writeText(html);
     setCopiedHtml(true);
     setTimeout(() => setCopiedHtml(false), 2000);
@@ -455,15 +456,23 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [loading]);
 
+  if (window.location.pathname === "/impressum") {
+    return <ImpressumPage />;
+  }
+
+  if (window.location.pathname === "/datenschutz") {
+    return <DatenschutzPage />;
+  }
+
   return (
     <div className="min-h-screen bg-[#F5F5F0] text-[#141414] font-sans p-4 md:p-8">
       <div className="max-w-3xl mx-auto">
         {/* Header */}
         <header className="mb-12 border-b border-[#141414] pb-6">
           <div className="flex justify-between items-start mb-4">
-            <a 
-              href="https://www.volleyball-bundesliga.de/" 
-              target="_blank" 
+            <a
+              href="https://www.volleyball-bundesliga.de/"
+              target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-3 hover:opacity-80 transition-opacity group w-fit"
             >
@@ -489,7 +498,7 @@ function AppContent() {
                     {user.photoURL && (
                       <img src={user.photoURL} alt="" className="w-6 h-6 rounded-full border border-black/10" referrerPolicy="no-referrer" />
                     )}
-                    <button 
+                    <button
                       onClick={handleLogout}
                       className="text-[#5A5A40]/40 hover:text-red-500 transition-colors"
                       title="Abmelden"
@@ -498,7 +507,7 @@ function AppContent() {
                     </button>
                   </div>
                 ) : (
-                  <button 
+                  <button
                     onClick={handleLogin}
                     className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#5A5A40] hover:text-[#141414] transition-colors bg-white/50 py-2 px-4 rounded-full border border-black/5"
                   >
@@ -552,7 +561,7 @@ function AppContent() {
                     <p className="text-[10px] text-[#5A5A40]/60">
                       {dbMatchNumbers.length} Spiele in Firestore hinterlegt
                     </p>
-                    <button 
+                    <button
                       onClick={() => setShowDbDetails(!showDbDetails)}
                       className="text-[9px] text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors"
                       title="Datenbank-Details anzeigen"
@@ -567,13 +576,13 @@ function AppContent() {
                   )}
                   {isAdmin && (
                     <div className="flex flex-col gap-1 mt-1">
-                      <button 
+                      <button
                         onClick={() => console.log("DB Match Numbers:", dbMatchNumbers)}
                         className="text-[8px] text-[#5A5A40]/30 hover:underline text-left"
                       >
                         (Debug Log)
                       </button>
-                      <button 
+                      <button
                         onClick={async () => {
                           setIsExplorerLoading(true);
                           try {
@@ -609,7 +618,7 @@ function AppContent() {
                     <Database className="w-3 h-3" /> SYNC FEHLER
                   </div>
                 )}
-                <button 
+                <button
                   onClick={async () => {
                     setIsDbLoading(true);
                     try {
@@ -662,7 +671,7 @@ function AppContent() {
                   </span>
                 </div>
               </div>
-              
+
               {allDbMatches.length > 0 && (
                 <div className="mt-4">
                   <h4 className="text-[9px] font-bold text-[#5A5A40] uppercase mb-2">Gespeicherte Dokumente:</h4>
@@ -690,7 +699,7 @@ function AppContent() {
                       </tbody>
                     </table>
                   </div>
-                  <button 
+                  <button
                     onClick={() => setAllDbMatches([])}
                     className="mt-2 text-[8px] text-red-500 hover:underline"
                   >
@@ -711,7 +720,7 @@ function AppContent() {
             {Array.from(new Set([...Object.keys(SEASON_MATCHES), ...dbMatchNumbers]))
               .sort((a, b) => Number(a) - Number(b))
               .map(num => (
-                <button 
+                <button
                   key={num}
                   onClick={() => setMatchNumber(num)}
                   disabled={loading}
@@ -744,22 +753,22 @@ function AppContent() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {Object.entries(KNOWN_TEAMS)
               // Filter to show each teamId only once (taking the first name found)
-              .filter((entry, index, self) => 
+              .filter((entry, index, self) =>
                 index === self.findIndex((t) => t[1] === entry[1])
               )
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([name, id]) => (
-                <a 
-                  key={id} 
+                <a
+                  key={id}
                   href={TEAM_URL(id)}
-                  target="_blank" 
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="bg-white/80 p-3 rounded-xl border border-black/5 hover:border-[#5A5A40]/30 hover:bg-white transition-all flex items-center gap-3 group"
                 >
                   <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center p-1 border border-black/5 flex-shrink-0">
-                    <img 
-                      src={TEAM_LOGO_URL(id)} 
-                      alt={name} 
+                    <img
+                      src={TEAM_LOGO_URL(id)}
+                      alt={name}
                       referrerPolicy="no-referrer"
                       className="max-w-full max-h-full object-contain"
                       onError={(e) => {
@@ -779,8 +788,8 @@ function AppContent() {
           <form onSubmit={handleGenerate} className="space-y-6">
             <div className="grid md:grid-cols-2 gap-6">
               <div>
-                <label 
-                  htmlFor="matchNumber" 
+                <label
+                  htmlFor="matchNumber"
                   className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
                 >
                   Spielnummer (z.B. 3137)
@@ -812,8 +821,8 @@ function AppContent() {
               </div>
 
               <div>
-                <label 
-                  htmlFor="teamSelect" 
+                <label
+                  htmlFor="teamSelect"
                   className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
                 >
                   Beteiligte Mannschaft (Optional)
@@ -827,7 +836,7 @@ function AppContent() {
                 >
                   <option value="">-- Mannschaft wählen (für schnellere Suche) --</option>
                   {Object.entries(KNOWN_TEAMS)
-                    .filter((entry, index, self) => 
+                    .filter((entry, index, self) =>
                       index === self.findIndex((t) => t[1] === entry[1])
                     )
                     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -839,83 +848,83 @@ function AppContent() {
               </div>
             </div>
 
-              <div className="pt-2 grid md:grid-cols-3 gap-4">
-                <div>
-                  <label 
-                    htmlFor="manualWeekday" 
-                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
-                  >
-                    Wochentag (Optional)
-                  </label>
-                  <input
-                    id="manualWeekday"
-                    type="text"
-                    value={manualWeekday}
-                    onChange={(e) => setManualWeekday(e.target.value)}
-                    placeholder="z.B. Sonntag"
-                    disabled={loading}
-                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-                <div>
-                  <label 
-                    htmlFor="manualDate" 
-                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
-                  >
-                    Datum (Optional)
-                  </label>
-                  <input
-                    id="manualDate"
-                    type="text"
-                    value={manualDate}
-                    onChange={(e) => setManualDate(e.target.value)}
-                    placeholder="z.B. 29.03.2026"
-                    disabled={loading}
-                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-                <div>
-                  <label 
-                    htmlFor="manualTime" 
-                    className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
-                  >
-                    Uhrzeit (Optional)
-                  </label>
-                  <input
-                    id="manualTime"
-                    type="text"
-                    value={manualTime}
-                    onChange={(e) => setManualTime(e.target.value)}
-                    placeholder="z.B. 16:00"
-                    disabled={loading}
-                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <label 
-                  htmlFor="manualMatchId" 
+            <div className="pt-2 grid md:grid-cols-3 gap-4">
+              <div>
+                <label
+                  htmlFor="manualWeekday"
                   className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
                 >
-                  Manuelle Match-ID (Optional)
+                  Wochentag (Optional)
                 </label>
-                <div className="relative">
-                  <input
-                    id="manualMatchId"
-                    type="text"
-                    value={manualMatchId}
-                    onChange={(e) => setManualMatchId(e.target.value.replace(/\D/g, ''))}
-                    placeholder="z.B. 777353472"
-                    disabled={loading}
-                    className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm font-mono focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed pr-12"
-                  />
-                  <Database className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40]/40" />
-                </div>
-                <p className="mt-2 text-[10px] text-[#5A5A40]/40 italic">
-                  Falls die Suche fehlschlägt: Die Match-ID findest du auf der VBL-Seite unter "i" (Info) in der URL (matchId=...).
-                </p>
+                <input
+                  id="manualWeekday"
+                  type="text"
+                  value={manualWeekday}
+                  onChange={(e) => setManualWeekday(e.target.value)}
+                  placeholder="z.B. Sonntag"
+                  disabled={loading}
+                  className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                />
               </div>
+              <div>
+                <label
+                  htmlFor="manualDate"
+                  className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                >
+                  Datum (Optional)
+                </label>
+                <input
+                  id="manualDate"
+                  type="text"
+                  value={manualDate}
+                  onChange={(e) => setManualDate(e.target.value)}
+                  placeholder="z.B. 29.03.2026"
+                  disabled={loading}
+                  className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="manualTime"
+                  className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+                >
+                  Uhrzeit (Optional)
+                </label>
+                <input
+                  id="manualTime"
+                  type="text"
+                  value={manualTime}
+                  onChange={(e) => setManualTime(e.target.value)}
+                  placeholder="z.B. 16:00"
+                  disabled={loading}
+                  className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <label
+                htmlFor="manualMatchId"
+                className="block text-xs uppercase tracking-widest font-bold text-[#5A5A40] mb-2"
+              >
+                Manuelle Match-ID (Optional)
+              </label>
+              <div className="relative">
+                <input
+                  id="manualMatchId"
+                  type="text"
+                  value={manualMatchId}
+                  onChange={(e) => setManualMatchId(e.target.value.replace(/\D/g, ''))}
+                  placeholder="z.B. 777353472"
+                  disabled={loading}
+                  className="w-full bg-[#F5F5F0] border-none rounded-2xl py-3 px-6 text-sm font-mono focus:ring-2 focus:ring-[#5A5A40] transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed pr-12"
+                />
+                <Database className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40]/40" />
+              </div>
+              <p className="mt-2 text-[10px] text-[#5A5A40]/40 italic">
+                Falls die Suche fehlschlägt: Die Match-ID findest du auf der VBL-Seite unter "i" (Info) in der URL (matchId=...).
+              </p>
+            </div>
 
             <div className="relative">
               <p className="text-[10px] text-[#5A5A40]/50 italic mb-4">
@@ -985,8 +994,8 @@ function AppContent() {
                       type="button"
                       className={cn(
                         "flex items-center justify-center gap-2 py-2 px-4 rounded-xl text-xs font-bold transition-all disabled:opacity-50",
-                        isDeleteConfirming 
-                          ? "bg-red-600 text-white hover:bg-red-700 animate-pulse" 
+                        isDeleteConfirming
+                          ? "bg-red-600 text-white hover:bg-red-700 animate-pulse"
                           : "bg-red-100 text-red-600 hover:bg-red-200"
                       )}
                     >
@@ -1024,7 +1033,7 @@ function AppContent() {
                   <p className="text-[8px] text-[#5A5A40]/40 uppercase tracking-widest">Abgelaufen</p>
                 </div>
               </div>
-              
+
               <div className="max-h-32 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
                 {logs.slice(0, -1).reverse().map((log, i) => (
                   <div key={i} className="flex items-center gap-2 text-[10px] text-[#5A5A40]/50 font-mono">
@@ -1079,7 +1088,7 @@ function AppContent() {
               </div>
               <div className="flex items-center gap-4">
                 {previewData.matchId && (
-                  <a 
+                  <a
                     href={`https://www.volleyball-bundesliga.de/popup/matchSeries/matchDetails.xhtml?matchId=${previewData.matchId}&hideHistoryBackButton=true`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1089,7 +1098,7 @@ function AppContent() {
                     VBL Seite öffnen
                   </a>
                 )}
-                <button 
+                <button
                   onClick={() => {
                     console.log("Raw Preview Data:", previewData);
                     alert("Die Rohdaten wurden in die Browser-Konsole (F12) geloggt.");
@@ -1099,7 +1108,7 @@ function AppContent() {
                   <Database className="w-3 h-3" />
                   Rohdaten (Konsole)
                 </button>
-                <button 
+                <button
                   onClick={() => setPreviewData(null)}
                   className="text-gray-400 hover:text-red-500 transition-colors"
                 >
@@ -1109,136 +1118,136 @@ function AppContent() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4 mb-8">
-              <ValidationField 
-                label="Match-ID" 
-                value={previewData.matchId} 
-                onChange={(v) => updatePreviewField("matchId", v)} 
+              <ValidationField
+                label="Match-ID"
+                value={previewData.matchId}
+                onChange={(v) => updatePreviewField("matchId", v)}
                 warning={!previewData.matchId ? "Fehlt!" : undefined}
                 link={previewData.matchId ? VBL_MATCH_URL(previewData.matchId) : undefined}
               />
-              <ValidationField 
-                label="SAMS Score UUID" 
-                value={previewData.samsScoreUuid} 
-                onChange={(v) => updatePreviewField("samsScoreUuid", v)} 
+              <ValidationField
+                label="SAMS Score UUID"
+                value={previewData.samsScoreUuid}
+                onChange={(v) => updatePreviewField("samsScoreUuid", v)}
                 link={previewData.samsScoreUuid ? SAMS_URL(previewData.samsScoreUuid, matchNumber) : undefined}
               />
               <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                <ValidationField 
-                  label="Heimteam" 
-                  value={previewData.homeTeam} 
-                  onChange={(v) => updatePreviewField("homeTeam", v)} 
+                <ValidationField
+                  label="Heimteam"
+                  value={previewData.homeTeam}
+                  onChange={(v) => updatePreviewField("homeTeam", v)}
                   link={previewData.homeTeamId ? TEAM_URL(previewData.homeTeamId) : undefined}
                   logo={previewData.homeTeamId ? TEAM_LOGO_URL(previewData.homeTeamId) : undefined}
                 />
-                <ValidationField 
-                  label="Heimteam-ID" 
-                  value={previewData.homeTeamId} 
-                  onChange={(v) => updatePreviewField("homeTeamId", v)} 
+                <ValidationField
+                  label="Heimteam-ID"
+                  value={previewData.homeTeamId}
+                  onChange={(v) => updatePreviewField("homeTeamId", v)}
                   link={previewData.homeTeamId ? TEAM_URL(previewData.homeTeamId) : undefined}
                 />
               </div>
               <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                <ValidationField 
-                  label="Gastteam" 
-                  value={previewData.awayTeam} 
-                  onChange={(v) => updatePreviewField("awayTeam", v)} 
+                <ValidationField
+                  label="Gastteam"
+                  value={previewData.awayTeam}
+                  onChange={(v) => updatePreviewField("awayTeam", v)}
                   link={previewData.awayTeamId ? TEAM_URL(previewData.awayTeamId) : undefined}
                   logo={previewData.awayTeamId ? TEAM_LOGO_URL(previewData.awayTeamId) : undefined}
                 />
-                <ValidationField 
-                  label="Gastteam-ID" 
-                  value={previewData.awayTeamId} 
-                  onChange={(v) => updatePreviewField("awayTeamId", v)} 
+                <ValidationField
+                  label="Gastteam-ID"
+                  value={previewData.awayTeamId}
+                  onChange={(v) => updatePreviewField("awayTeamId", v)}
                   link={previewData.awayTeamId ? TEAM_URL(previewData.awayTeamId) : undefined}
                 />
               </div>
-              <ValidationField 
-                label="Spielort" 
-                value={previewData.venueName} 
-                onChange={(v) => updatePreviewField("venueName", v)} 
+              <ValidationField
+                label="Spielort"
+                value={previewData.venueName}
+                onChange={(v) => updatePreviewField("venueName", v)}
               />
-              <ValidationField 
-                label="Location ID" 
-                value={previewData.locationId} 
-                onChange={(v) => updatePreviewField("locationId", v)} 
+              <ValidationField
+                label="Location ID"
+                value={previewData.locationId}
+                onChange={(v) => updatePreviewField("locationId", v)}
                 link={previewData.locationId ? LOCATION_URL(previewData.locationId) : undefined}
               />
               <div className="md:col-span-2 grid grid-cols-3 gap-4">
-                <ValidationField 
-                  label="Wochentag" 
-                  value={previewData.weekday} 
-                  onChange={(v) => updatePreviewField("weekday", v)} 
+                <ValidationField
+                  label="Wochentag"
+                  value={previewData.weekday}
+                  onChange={(v) => updatePreviewField("weekday", v)}
                   placeholder="z.B. Samstag"
                 />
-                <ValidationField 
-                  label="Datum" 
-                  value={previewData.date} 
-                  onChange={(v) => updatePreviewField("date", v)} 
+                <ValidationField
+                  label="Datum"
+                  value={previewData.date}
+                  onChange={(v) => updatePreviewField("date", v)}
                   placeholder="z.B. 28.03.2026"
                 />
-                <ValidationField 
-                  label="Uhrzeit" 
-                  value={previewData.time} 
-                  onChange={(v) => updatePreviewField("time", v)} 
+                <ValidationField
+                  label="Uhrzeit"
+                  value={previewData.time}
+                  onChange={(v) => updatePreviewField("time", v)}
                   placeholder="z.B. 19:00"
                 />
               </div>
-              <ValidationField 
-                label="Zuschauer" 
-                value={previewData.spectators} 
-                onChange={(v) => updatePreviewField("spectators", v)} 
+              <ValidationField
+                label="Zuschauer"
+                value={previewData.spectators}
+                onChange={(v) => updatePreviewField("spectators", v)}
               />
-              <ValidationField 
-                label="Spielergebnis" 
-                value={previewData.resultSets} 
-                onChange={(v) => updatePreviewField("resultSets", v)} 
+              <ValidationField
+                label="Spielergebnis"
+                value={previewData.resultSets}
+                onChange={(v) => updatePreviewField("resultSets", v)}
                 placeholder="z.B. 3:0"
               />
-              <ValidationField 
-                label="Satz-Ergebnisse" 
-                value={previewData.setPoints} 
-                onChange={(v) => updatePreviewField("setPoints", v)} 
+              <ValidationField
+                label="Satz-Ergebnisse"
+                value={previewData.setPoints}
+                onChange={(v) => updatePreviewField("setPoints", v)}
                 placeholder="z.B. 25:12, 25:18, 25:15"
               />
-              <ValidationField 
-                label="Gesamtpunkte" 
-                value={previewData.totalPoints} 
-                onChange={(v) => updatePreviewField("totalPoints", v)} 
+              <ValidationField
+                label="Gesamtpunkte"
+                value={previewData.totalPoints}
+                onChange={(v) => updatePreviewField("totalPoints", v)}
                 placeholder="z.B. 75:45"
               />
-              <ValidationField 
-                label="Spieldauer" 
-                value={previewData.matchDuration} 
-                onChange={(v) => updatePreviewField("matchDuration", v)} 
+              <ValidationField
+                label="Spieldauer"
+                value={previewData.matchDuration}
+                onChange={(v) => updatePreviewField("matchDuration", v)}
                 placeholder="z.B. 107 Min. (23, 27, 26, 31)"
               />
-              <ValidationField 
-                label="MVP Heim (Name)" 
-                value={previewData.mvpHomeName} 
-                onChange={(v) => updatePreviewField("mvpHomeName", v)} 
+              <ValidationField
+                label="MVP Heim (Name)"
+                value={previewData.mvpHomeName}
+                onChange={(v) => updatePreviewField("mvpHomeName", v)}
               />
-              <ValidationField 
-                label="MVP Heim (User-ID)" 
-                value={previewData.mvpHomeUserId} 
-                onChange={(v) => updatePreviewField("mvpHomeUserId", v)} 
+              <ValidationField
+                label="MVP Heim (User-ID)"
+                value={previewData.mvpHomeUserId}
+                onChange={(v) => updatePreviewField("mvpHomeUserId", v)}
                 link={previewData.homeTeamId && previewData.mvpHomeUserId ? PLAYER_URL(previewData.homeTeamId, previewData.mvpHomeUserId) : undefined}
               />
-              <ValidationField 
-                label="MVP Gast (Name)" 
-                value={previewData.mvpAwayName} 
-                onChange={(v) => updatePreviewField("mvpAwayName", v)} 
+              <ValidationField
+                label="MVP Gast (Name)"
+                value={previewData.mvpAwayName}
+                onChange={(v) => updatePreviewField("mvpAwayName", v)}
               />
-              <ValidationField 
-                label="MVP Gast (User-ID)" 
-                value={previewData.mvpAwayUserId} 
-                onChange={(v) => updatePreviewField("mvpAwayUserId", v)} 
+              <ValidationField
+                label="MVP Gast (User-ID)"
+                value={previewData.mvpAwayUserId}
+                onChange={(v) => updatePreviewField("mvpAwayUserId", v)}
                 link={previewData.awayTeamId && previewData.mvpAwayUserId ? PLAYER_URL(previewData.awayTeamId, previewData.mvpAwayUserId) : undefined}
               />
               <div className="md:col-span-2">
-                <ValidationField 
-                  label="YouTube URL" 
-                  value={previewData.youtubeUrl} 
-                  onChange={(v) => updatePreviewField("youtubeUrl", v)} 
+                <ValidationField
+                  label="YouTube URL"
+                  value={previewData.youtubeUrl}
+                  onChange={(v) => updatePreviewField("youtubeUrl", v)}
                   link={previewData.youtubeUrl || undefined}
                 />
               </div>
@@ -1308,7 +1317,7 @@ function AppContent() {
                 </button>
               </div>
             </div>
-            
+
             {/* Clickable Preview */}
             <div className="bg-white p-8 rounded-[32px] shadow-sm border border-black/5">
               <div className="prose prose-sm max-w-none prose-a:text-[#5A5A40] prose-a:font-bold prose-a:no-underline hover:prose-a:underline">
@@ -1343,6 +1352,18 @@ function AppContent() {
             <p className="font-serif italic text-xl">Gib eine Spielnummer ein, um zu beginnen.</p>
           </div>
         )}
+
+        <footer className="mt-16 pt-8 border-t border-[#141414]/10 text-center text-[10px] text-[#5A5A40]/60">
+          <div className="flex justify-center gap-4 mb-2">
+            <a href="/impressum" className="hover:text-[#141414] hover:underline">
+              Impressum
+            </a>
+            <a href="/datenschutz" className="hover:text-[#141414] hover:underline">
+              Datenschutz
+            </a>
+          </div>
+          <p>© {new Date().getFullYear()} KnZ Sports Media</p>
+        </footer>
       </div>
     </div>
   );
@@ -1423,9 +1444,9 @@ const TEAM_LOGO_URL = (teamId: string) => {
 
 const PLAYER_URL = (teamId: string, userId: string) => `https://www.volleyball-bundesliga.de/popup/teamMember/teamMemberDetails.xhtml?teamId=${teamId}&userId=${userId}`;
 
-function ValidationField({ label, value, onChange, warning, placeholder, link, logo }: { 
-  label: string, 
-  value: string | undefined, 
+function ValidationField({ label, value, onChange, warning, placeholder, link, logo }: {
+  label: string,
+  value: string | undefined,
   onChange: (v: string) => void,
   warning?: string,
   placeholder?: string,
@@ -1439,9 +1460,9 @@ function ValidationField({ label, value, onChange, warning, placeholder, link, l
         <div className="flex items-center gap-2">
           {warning && <span className="text-[9px] font-bold text-red-500 animate-pulse">{warning}</span>}
           {link && value && (
-            <a 
-              href={link} 
-              target="_blank" 
+            <a
+              href={link}
+              target="_blank"
               rel="noopener noreferrer"
               className="text-[9px] font-bold text-[#5A5A40] hover:underline flex items-center gap-0.5 bg-[#5A5A40]/5 px-1.5 py-0.5 rounded"
             >
@@ -1451,7 +1472,7 @@ function ValidationField({ label, value, onChange, warning, placeholder, link, l
         </div>
       </div>
       <div className="relative group">
-        <input 
+        <input
           type="text"
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
@@ -1464,9 +1485,9 @@ function ValidationField({ label, value, onChange, warning, placeholder, link, l
         />
         {logo && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-lg border border-black/5 flex items-center justify-center p-0.5 pointer-events-none">
-            <img 
-              src={logo} 
-              alt="" 
+            <img
+              src={logo}
+              alt=""
               referrerPolicy="no-referrer"
               className="max-w-full max-h-full object-contain"
               onError={(e) => {
