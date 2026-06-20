@@ -238,8 +238,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         contents: prompt,
         config: {
           tools: [{ urlContext: {} }, { googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: matchSchema,
           systemInstruction:
             "Du bist ein präziser Daten-Extraktor für Volleyball-Spielberichte. Antworte ausschließlich mit validem JSON gemäß Schema. Leere Felder = leerer String. Halluziniere keine Daten.",
         },
