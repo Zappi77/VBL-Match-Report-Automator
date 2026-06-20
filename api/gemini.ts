@@ -61,6 +61,7 @@ async function requireAdmin(req: VercelRequest): Promise<void> {
   }
 
   const apiKey =
+    process.env.FIREBASE_SERVER_API_KEY ||
     process.env.FIREBASE_WEB_API_KEY ||
     process.env.FIREBASE_API_KEY ||
     process.env.VITE_FIREBASE_API_KEY;
