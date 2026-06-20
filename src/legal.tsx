@@ -1,7 +1,7 @@
 export function ImpressumPage() {
   return (
     <main className="min-h-screen bg-[#F5F5F0] text-[#141414] font-sans p-4 md:p-8">
-      <article className="max-w-3xl mx-auto bg-white p-8 rounded-[32px] border border-black/5 prose prose-sm">
+      <article className="legal-content max-w-3xl mx-auto bg-white p-8 md:p-10 rounded-[32px] border border-black/5 shadow-sm">
         <h1>Impressum</h1>
 
         <h2>Angaben gemäß § 5 DDG</h2>
@@ -69,7 +69,7 @@ export function ImpressumPage() {
 export function DatenschutzPage() {
   return (
     <main className="min-h-screen bg-[#F5F5F0] text-[#141414] font-sans p-4 md:p-8">
-      <article className="max-w-3xl mx-auto bg-white p-8 rounded-[32px] border border-black/5 prose prose-sm">
+      <article className="legal-content max-w-3xl mx-auto bg-white p-8 md:p-10 rounded-[32px] border border-black/5 shadow-sm">
         <h1>Datenschutzerklärung</h1>
 
         <h2>1. Datenschutz auf einen Blick</h2>
