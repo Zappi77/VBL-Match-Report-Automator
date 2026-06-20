@@ -1,23 +1,9 @@
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI, Type } from "@google/genai";
 
-type ApiRequest = {
-  method?: string;
-  headers: Record<string, string | string[] | undefined>;
-  body?: {
-    mode?: unknown;
-    prompt?: unknown;
-  };
-};
+const MODEL_FAST = "gemini-2.5-flash";
+const MODEL_SMART = "gemini-2.5-flash";
 
-type ApiResponse = {
-  setHeader(name: string, value: string): void;
-  status(code: number): {
-    json(body: unknown): void;
-  };
-};
-
-const MODEL_FAST = "gemini-3-flash-preview";
-const MODEL_SMART = "gemini-3.1-pro-preview";
 const MAX_PROMPT_LENGTH = 20000;
 const DEFAULT_ALLOWED_ORIGIN = "https://vbl-match-report-automator.vercel.app";
 
@@ -25,8 +11,8 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-function getHeader(req: ApiRequest, name: string): string {
-  const value = req.headers[name.toLowerCase()] || req.headers[name];
+function getHeader(req: VercelRequest, name: string): string {
+  const value = req.headers[name.toLowerCase()];
 
   if (Array.isArray(value)) {
     return value[0] || "";
@@ -35,7 +21,38 @@ function getHeader(req: ApiRequest, name: string): string {
   return value || "";
 }
 
-async function requireAdmin(req: ApiRequest): Promise<void> {
+function getAllowedOrigins(): string[] {
+  const configuredOrigins = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const vercelOrigin = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "";
+
+  return Array.from(
+    new Set([DEFAULT_ALLOWED_ORIGIN, vercelOrigin, ...configuredOrigins].filter(Boolean))
+  );
+}
+
+function isAllowedOrigin(req: VercelRequest): boolean {
+  const origin = getHeader(req, "origin");
+
+  if (!origin) {
+    return true;
+  }
+
+  return getAllowedOrigins().includes(origin);
+}
+
+function setApiSecurityHeaders(res: VercelResponse) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+}
+
+async function requireAdmin(req: VercelRequest): Promise<void> {
   const authorization = getHeader(req, "authorization");
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
 
@@ -43,7 +60,11 @@ async function requireAdmin(req: ApiRequest): Promise<void> {
     throw new Error("Missing authorization token.");
   }
 
-  const apiKey = process.env.FIREBASE_WEB_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+  const apiKey =
+    process.env.FIREBASE_WEB_API_KEY ||
+    process.env.FIREBASE_API_KEY ||
+    process.env.VITE_FIREBASE_API_KEY;
+
   if (!apiKey) {
     throw new Error("Firebase Auth API key is not configured.");
   }
@@ -60,7 +81,8 @@ async function requireAdmin(req: ApiRequest): Promise<void> {
   );
 
   if (!response.ok) {
-    throw new Error("Invalid authorization token.");
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`Invalid authorization token. ${errorText}`);
   }
 
   const data = await response.json();
@@ -116,7 +138,7 @@ const allowedModes: GeminiMode[] = [
   "extract_match_data",
 ];
 
-function getPrompt(req: ApiRequest): string {
+function getPrompt(req: VercelRequest): string {
   const prompt = req.body?.prompt;
 
   if (!prompt || typeof prompt !== "string") {
@@ -130,7 +152,7 @@ function getPrompt(req: ApiRequest): string {
   return prompt.trim();
 }
 
-function getMode(req: ApiRequest): GeminiMode {
+function getMode(req: VercelRequest): GeminiMode {
   const mode = req.body?.mode;
 
   if (typeof mode !== "string" || !allowedModes.includes(mode as GeminiMode)) {
@@ -140,38 +162,7 @@ function getMode(req: ApiRequest): GeminiMode {
   return mode as GeminiMode;
 }
 
-function getAllowedOrigins(): string[] {
-  const configuredOrigins = (process.env.ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-
-  const vercelOrigin = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "";
-
-  return Array.from(
-    new Set([DEFAULT_ALLOWED_ORIGIN, vercelOrigin, ...configuredOrigins].filter(Boolean))
-  );
-}
-
-function isAllowedOrigin(req: ApiRequest): boolean {
-  const origin = getHeader(req, "origin");
-
-  if (!origin) {
-    return true;
-  }
-
-  return typeof origin === "string" && getAllowedOrigins().includes(origin);
-}
-
-function setApiSecurityHeaders(res: ApiResponse) {
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-}
-
-export default async function handler(req: ApiRequest, res: ApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   setApiSecurityHeaders(res);
 
   if (!isAllowedOrigin(req)) {
@@ -182,8 +173,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(405).json({ error: "Method not allowed." });
   }
 
-  const contentType = req.headers["content-type"] || "";
-  if (!String(contentType).toLowerCase().includes("application/json")) {
+  const contentType = getHeader(req, "content-type");
+
+  if (!contentType.toLowerCase().includes("application/json")) {
     return res.status(415).json({ error: "Content-Type must be application/json." });
   }
 
