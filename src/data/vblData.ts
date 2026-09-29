@@ -23,10 +23,11 @@ export interface MatchReference {
   fromDb?: boolean;
 }
 
-// Saison 2026/27: Rote Raben Vilsbiburg (1. Liga) sowie TV Hörde, BBSC Berlin und
-// TV Dingolfing (abgestiegen) spielen nicht mehr in der 2. Liga Pro.
-// Aufsteiger SCU Emlichheim (Nord) und SV Lohhof (Süd) fehlen noch:
-// teamId ergänzen (VBL-Mannschaftsseite, Parameter c.teamId) – bis dahin extrahiert die KI sie.
+// Sparda 2. Liga Pro (eingleisig, zweithöchste Spielklasse) – Saison 2026/27:
+// - Aufgestiegen in die 1. Liga: Rote Raben Vilsbiburg
+// - Abgestiegen in die 2. Bundesliga Nord/Süd (darunter, zweigleisig): TV Hörde, BBSC Berlin (Nord), TV Dingolfing (Süd)
+// - Aufsteiger aus den Meisterschaften der 2. Bundesliga: SCU Emlichheim (Nord), SV Lohhof (Süd)
+//   -> teamId noch offen (VBL-Mannschaftsseite, Parameter c.teamId); bis dahin extrahiert die KI sie.
 export const KNOWN_TEAMS: Record<string, string> = {
   "BayerVolleys Leverkusen": "776308933",
   "Bayer-Volleys Leverkusen": "776308933",
