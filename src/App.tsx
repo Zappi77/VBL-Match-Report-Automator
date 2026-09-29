@@ -1412,6 +1412,8 @@ const TEAM_LOGO_URL = (teamId: string) => {
     "776309795": { code: "TVW", bg: "#3898CF" }, // TV Waldgirmes
     "776309105": { code: "VCO", bg: "#009CD0" }, // VCO Dresden
     "776308853": { code: "OYT", bg: "#E31825" }, // VfL Oythe
+    "781344876": { code: "EML", bg: "#343434" }, // SCU Emlichheim (Farbe Platzhalter)
+    "781345807": { code: "LOH", bg: "#343434" }, // SV Lohhof (Farbe Platzhalter)
     "776309082": { code: "RRV", bg: "#E20010" }, // Rote Raben Vilsbiburg
     "776308987": { code: "BER", bg: "#D70079" }, // BBSC Berlin
     "776309004": { code: "TVD", bg: "#E0B187", fg: "#111111" }, // TV Dingolfing

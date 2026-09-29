@@ -207,7 +207,7 @@ async function tryResolveMatchIdWithAI(
     ANWEISUNG:
     1. Suche in den Tabellen nach der Spielnummer ${matchNumber}.
     2. Die matchId steht im Link zum Info-Icon "i" oder zur Detailseite (matchDetails.xhtml?matchId=XXXXXXXXX) oder im Attribut id="match_XXXXXXXXX".
-    3. Die matchId ist eine 9-stellige Zahl (beginnt meist mit 777).
+    3. Die matchId ist eine 9-stellige Zahl (beginnt meist mit 777 oder 781).
     
     WICHTIG:
     - Die matchId ist NICHT die Spielnummer ${matchNumber}.
@@ -556,7 +556,7 @@ async function extractMatchData(
     7. TEAM-IDs (homeTeamId, awayTeamId):
        - Aus Links zu Mannschaftsseiten (meist oben beim Ergebnis): c.teamId=XXXXXXXXX
        - WICHTIG: Verifiziere, dass die teamId zum jeweiligen Teamnamen passt. Nimm NICHT die IDs von anderen Spielen auf der Seite.
-       - Die teamId ist meist 9-stellig (z.B. 776308823). Sie beginnt meist mit 776.
+       - Die teamId ist meist 9-stellig (z.B. 776308823). Sie beginnt meist mit 776 oder 781 (neuere Teams).
     
     8. YOUTUBE Re-Live (Zeile 10):
        - Pro Spieltag ist nur EIN Spiel frei auf YouTube verfügbar, alle anderen Spiele laufen ausschließlich bei DYN (kostenpflichtig).

@@ -27,8 +27,9 @@ export interface MatchReference {
 // - Aufgestiegen in die 1. Liga: Rote Raben Vilsbiburg
 // - Abgestiegen in die 2. Bundesliga Nord/Süd (darunter, zweigleisig): TV Hörde, BBSC Berlin (Nord), TV Dingolfing (Süd)
 // - Aufsteiger aus den Meisterschaften der 2. Bundesliga: SCU Emlichheim (Nord), SV Lohhof (Süd)
-//   -> teamId noch offen (VBL-Mannschaftsseite, Parameter c.teamId); bis dahin extrahiert die KI sie.
 export const KNOWN_TEAMS: Record<string, string> = {
+  "SCU Emlichheim": "781344876",
+  "SV Lohhof": "781345807",
   "BayerVolleys Leverkusen": "776308933",
   "Bayer-Volleys Leverkusen": "776308933",
   "DSHS SnowTrex Köln": "776308895",
