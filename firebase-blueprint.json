@@ -64,7 +64,7 @@
       "schema": "Team",
       "description": "Collection of teams"
     },
-    "/matches/{matchNumber}": {
+    "/seasons/{seasonId}/matches/{matchNumber}": {
       "schema": "Match",
       "description": "Collection of matches"
     },
@@ -72,7 +72,7 @@
       "schema": "Player",
       "description": "Collection of players"
     },
-    "/reports/{matchNumber}": {
+    "/seasons/{seasonId}/reports/{matchNumber}": {
       "schema": "Report",
       "description": "Cached reports"
     }

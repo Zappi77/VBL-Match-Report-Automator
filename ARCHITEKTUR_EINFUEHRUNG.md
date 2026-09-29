@@ -76,7 +76,7 @@ App.tsx
 fetchMatchDataFull(...) in src/services/geminiService.ts
    ↓
 A) Lookup in statischen Daten (SEASON_MATCHES)
-B) Firestore-Lookup in matches/{matchNumber}
+B) Firestore-Lookup in seasons/{Saison}/matches/{matchNumber}
 C) matchId-Auflösung, falls nötig
    ↓
 matchId bekannt

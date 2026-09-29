@@ -23,6 +23,10 @@ export interface MatchReference {
   fromDb?: boolean;
 }
 
+// Saison 2026/27: Absteiger aus der 1. Liga (TV Hörde, BBSC Berlin -> Nord, TV Dingolfing -> Süd)
+// sind bereits bekannt. Aufsteiger SCU Emlichheim (Nord) und SV Lohhof (Süd) fehlen noch:
+// teamId ergänzen (VBL-Mannschaftsseite, Parameter c.teamId) – bis dahin extrahiert die KI sie.
+// Rote Raben Vilsbiburg sind in die 1. Liga aufgestiegen und spielen nicht mehr in der 2. Liga Pro.
 export const KNOWN_TEAMS: Record<string, string> = {
   "BBSC Berlin": "776308987",
   "BayerVolleys Leverkusen": "776308933",
@@ -32,7 +36,6 @@ export const KNOWN_TEAMS: Record<string, string> = {
   "Eintracht Spontent Düsseldorf": "776311815",
   "NawaRo Straubing": "776308823",
   "Neuseenland-Volleys Markkleeberg": "776309559",
-  "Rote Raben Vilsbiburg": "776309082",
   "Sparkassen Wildcats Stralsund": "776309386",
   "1. VC Stralsund": "776309386",
   "TV Dingolfing": "776309004",
@@ -54,60 +57,9 @@ export const KNOWN_LOCATIONS: Record<string, string> = {
 
 // This table acts as the "Master Season Table"
 // It maps Match Number -> Full Reference Data
-export const SEASON_MATCHES: Record<string, MatchReference> = {
-  "3150": {
-    matchId: "777354215",
-    homeTeam: "TV Planegg-Krailling",
-    homeTeamId: "776309673",
-    awayTeam: "NawaRo Straubing",
-    awayTeamId: "776308823",
-    venueName: "Feodor-Lynen-Gymnasium",
-    locationId: "70012456",
-    date: "28.03.2026",
-    time: "19:00",
-    weekday: "Samstag",
-    spectators: "220",
-    matchDuration: "68 Min. (22, 22, 24)",
-    setPoints: "(18:25, 19:25, 21:25)",
-    resultSets: "0:3",
-    youtubeUrl: "https://www.youtube.com/live/tSHqf8A2yi4",
-    samsScoreUuid: "0df17ec1-d1d3-4231-898c-b83a30b98f10" 
-  },
-  "3155": {
-    matchId: "777354246",
-    homeTeam: "NawaRo Straubing",
-    homeTeamId: "776308823",
-    awayTeam: "DSHS SnowTrex Köln",
-    awayTeamId: "776308895",
-    venueName: "turmair Volleyballarena",
-    locationId: "12233",
-    date: "28.03.2026",
-    time: "19:00",
-    weekday: "Samstag",
-    spectators: "500",
-    matchDuration: "92 Min. (26, 23, 22, 21)",
-    resultSets: "3:1",
-    setPoints: "20:25, 25:20, 25:15, 25:14"
-  },
-  "3072": {
-    matchId: "777353730",
-    homeTeam: "DSHS SnowTrex Köln",
-    homeTeamId: "776308895",
-    awayTeam: "NawaRo Straubing",
-    awayTeamId: "776308823",
-    venueName: "ACL 80 Köln",
-    locationId: "70012457"
-  },
-  "3003": {
-    matchId: "777353197",
-    homeTeam: "Skurios Volleys Borken",
-    homeTeamId: "776309313",
-    awayTeam: "NawaRo Straubing",
-    awayTeamId: "776308823",
-    venueName: "Merkelheider Weg",
-    locationId: "70012466"
-  }
-};
+// Saison 2026/27: bewusst leer – die Spielnummern der Vorsaison würden kollidieren.
+// Einträge entstehen über die Datenbank (Firestore: seasons/<Saison>/matches).
+export const SEASON_MATCHES: Record<string, MatchReference> = {};
 
 export const KNOWN_PLAYERS: Record<string, { userId: string; teamId: string }> = {
   "Amber de Tant": { userId: "751749162", teamId: "776308823" },

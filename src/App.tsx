@@ -1,6 +1,7 @@
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { ImpressumPage, DatenschutzPage } from "./legal";
 import { fetchMatchDataFull, saveMatchData, getMatchReport, matchCache, buildReport, saveReport, deleteMatchEntry } from "./services/geminiService";
+import { SEASON } from "./data/season";
 import { SEASON_MATCHES, KNOWN_TEAMS, type MatchReference } from "./data/vblData";
 import { Loader2, Copy, Check, Volleyball, Search, ExternalLink, Code, RefreshCw, Youtube, FileText, Layout, Info, AlertCircle, Database, Users, LogIn, LogOut, ShieldCheck, Save, Edit3, X } from "lucide-react";
 import { cn } from "./lib/utils";
@@ -186,7 +187,7 @@ function AppContent() {
   useEffect(() => {
     if (!isAuthReady) return;
 
-    const q = query(collection(db, "matches"));
+    const q = query(collection(db, "seasons", SEASON.id, "matches"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const numbers = snapshot.docs.map(doc => doc.id);
       console.log(`Firestore Sync: ${numbers.length} matches loaded.`, numbers);
@@ -523,7 +524,7 @@ function AppContent() {
               DSHS SnowTrex Köln Pressewart Tool
             </p>
             <p className="text-xs text-[#5A5A40]/60 font-medium">
-              Sparda 2. Liga Pro | Saison 2025/26
+              Sparda 2. Liga Pro | Saison {SEASON.label}
             </p>
           </div>
         </header>
@@ -534,11 +535,11 @@ function AppContent() {
           <div className="grid md:grid-cols-3 gap-6 text-xs text-[#141414]/70 leading-relaxed">
             <div className="space-y-2">
               <span className="font-bold text-[#5A5A40]">1. Spielnummer finden</span>
-              <p>Suche auf der <a href="https://www.volleyball-bundesliga.de/cms/home/2_bundesliga_frauen/2_bundesliga_frauen_pro.xhtml" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#5A5A40] decoration-[#5A5A40]/30">VBL-Webseite</a> die Spielnummer (z.B. 3150) für die Saison 2025/26 der 2. Liga Pro.</p>
+              <p>Suche auf der <a href="https://www.volleyball-bundesliga.de/cms/home/2_bundesliga_frauen/2_bundesliga_frauen_pro.xhtml" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#5A5A40] decoration-[#5A5A40]/30">VBL-Webseite</a> die Spielnummer (z.B. 3150) für die Saison {SEASON.label} der 2. Liga Pro.</p>
             </div>
             <div className="space-y-2">
               <span className="font-bold text-[#5A5A40]">2. Bericht generieren</span>
-              <p>Gib die Nummer unten ein. Die KI sucht nun nach Spieldaten, MVPs und dem passenden YouTube-Video.</p>
+              <p>Gib die Nummer unten ein. Die KI sucht nun nach Spieldaten, MVPs und – falls vorhanden – dem frei verfügbaren YouTube-Video (pro Spieltag nur eines, sonst DYN).</p>
             </div>
             <div className="space-y-2">
               <span className="font-bold text-[#5A5A40]">3. Exportieren</span>
@@ -586,7 +587,7 @@ function AppContent() {
                         onClick={async () => {
                           setIsExplorerLoading(true);
                           try {
-                            const q = query(collection(db, "matches"));
+                            const q = query(collection(db, "seasons", SEASON.id, "matches"));
                             const snap = await getDocs(q);
                             const data = snap.docs.map(d => d.data());
                             setAllDbMatches(data);
@@ -622,7 +623,7 @@ function AppContent() {
                   onClick={async () => {
                     setIsDbLoading(true);
                     try {
-                      const q = query(collection(db, "matches"));
+                      const q = query(collection(db, "seasons", SEASON.id, "matches"));
                       const snap = await getDocs(q);
                       setDbMatchNumbers(snap.docs.map(d => d.id));
                       setDbError(null);
@@ -1371,7 +1372,7 @@ function AppContent() {
 
 // URL Helpers for Validation
 const VBL_MATCH_URL = (matchId: string) => `https://www.volleyball-bundesliga.de/popup/matchSeries/matchDetails.xhtml?matchId=${matchId}&hideHistoryBackButton=true`;
-const STATS_URL = (matchNumber: string) => `https://live.volleyball-bundesliga.de/2025-26/Women/${matchNumber}.pdf`;
+const STATS_URL = (matchNumber: string) => `https://live.volleyball-bundesliga.de/${SEASON.statsPathId}/Women/${matchNumber}.pdf`;
 const SAMS_URL = (uuid: string, matchNumber: string) => `https://distributor.sams-score.de/scoresheet/pdf/${uuid}/${matchNumber}`;
 const LOCATION_URL = (locationId: string) => `https://www.volleyball-bundesliga.de/popup/location/locationDetails.xhtml?locationId=${locationId}&showVolleyballFields=true`;
 const TEAM_URL = (teamId: string) => `https://www.volleyball-bundesliga.de/cms/home/2_bundesliga_frauen/2_bundesliga_frauen_pro/mannschaften.xhtml?c.teamId=${teamId}&c.view=teamMain#samsCmsComponent_766577326`;

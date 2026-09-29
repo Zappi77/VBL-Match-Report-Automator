@@ -12,6 +12,10 @@ service cloud.firestore {
     //   - teamId: string (required)
     //   - logoUrl: string (optional)
     //
+    // Ab Saison 2026/27 liegen matches und reports pro Saison getrennt unter
+    //   seasons/{seasonId}/matches/{matchNumber}  und  seasons/{seasonId}/reports/{matchNumber}
+    // (Spielnummern wiederholen sich jede Saison). teams und players bleiben global.
+    //
     // Collection: matches
     // Document ID: matchNumber (VBL Number)
     // Fields:
@@ -100,7 +104,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /matches/{matchNumber} {
+    match /seasons/{seasonId}/matches/{matchNumber} {
       allow read: if true;
       allow create, update: if isAdmin() && isValidMatch(request.resource.data);
       allow delete: if isAdmin();
@@ -112,7 +116,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /reports/{matchNumber} {
+    match /seasons/{seasonId}/reports/{matchNumber} {
       allow read: if true;
       allow create, update: if isAdmin() && isValidReport(request.resource.data);
       allow delete: if isAdmin();

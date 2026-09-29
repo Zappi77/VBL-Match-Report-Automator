@@ -293,3 +293,10 @@ Quota-Verbrauch
 ## Live Demo
 
 [vbl-match-report-automator.vercel.app](https://vbl-match-report-automator.vercel.app)
+
+## Saisonwechsel
+
+1. `src/data/season.ts` anpassen (`id`, `label`, `statsPathId`, Jahre).
+2. `SEASON_MATCHES` in `src/data/vblData.ts` leeren, `KNOWN_TEAMS` an die neue Liga anpassen.
+3. YouTube-Playlist (`YOUTUBE_PLAYLIST_URL` in `geminiService.ts`) prüfen.
+4. `firestore.rules` deployen (Daten liegen unter `seasons/{id}/matches|reports`).

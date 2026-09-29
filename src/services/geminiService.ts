@@ -5,6 +5,7 @@ import {
   SEASON_MATCHES,
   type MatchReference,
 } from "../data/vblData";
+import { SEASON } from "../data/season";
 import { extractMatchIdCandidate } from "../lib/matchIdParsing";
 import { db, auth } from "../firebase";
 import {
@@ -20,8 +21,11 @@ import {
 // Konstanten
 // ─────────────────────────────────────────────
 
+// TODO Saison 2026/27: Playlist-URL prüfen/aktualisieren (aktuell Stand Vorsaison)
 const YOUTUBE_PLAYLIST_URL =
   "https://www.youtube.com/watch?v=-FkRIwJ7_KI&list=PLKvhsxfxEhVcbdeGhYZfXAPpB8UFaFWrp";
+
+const DYN_URL = "https://www.dyn.sport/";
 
 const TEAM_MATCHES_URL = (teamId: string) =>
   `https://www.volleyball-bundesliga.de/cms/home/2_bundesliga_frauen/2_bundesliga_frauen_pro/mannschaften.xhtml?c.teamId=${teamId}&c.view=matches#samsCmsComponent_766577326`;
@@ -33,7 +37,7 @@ const VBL_MATCH_URL = (matchId: string) =>
   `https://www.volleyball-bundesliga.de/popup/matchSeries/matchDetails.xhtml?matchId=${matchId}&hideHistoryBackButton=true`;
 
 const STATS_URL = (matchNumber: string) =>
-  `https://live.volleyball-bundesliga.de/2025-26/Women/${matchNumber}.pdf`;
+  `https://live.volleyball-bundesliga.de/${SEASON.statsPathId}/Women/${matchNumber}.pdf`;
 
 const SAMS_URL = (uuid: string, matchNumber: string) =>
   `https://distributor.sams-score.de/scoresheet/pdf/${uuid}/${matchNumber}`;
@@ -195,7 +199,7 @@ async function tryResolveMatchIdWithAI(
 ): Promise<MatchIdResolveResult> {
   const startedAt = Date.now();
   const prompt = `
-    AUFGABE: Finde die matchId für das VBL Volleyball Spiel Nummer ${matchNumber} (Saison 2025/26).
+    AUFGABE: Finde die matchId für das VBL Volleyball Spiel Nummer ${matchNumber} (Saison ${SEASON.label}).
     
     SUCHE AUF DIESEN SEITEN:
     ${searchUrls.map((url, i) => `${i + 1}. ${url}`).join("\n")}
@@ -231,7 +235,7 @@ try {
 
   onStatusUpdate?.("VBL-Direktsuche erfolglos. Starte Google-Suche...");
   const searchPrompt = `
-    Suche nach der matchId für "VBL Volleyball Spiel ${matchNumber} 2025/26".
+    Suche nach der matchId für "VBL Volleyball Spiel ${matchNumber} ${SEASON.label}".
     Die matchId ist 9-stellig und steht in der URL hinter matchId=.
     Antworte NUR mit der ID.
   `;
@@ -395,9 +399,9 @@ async function resolveMatchId(
 // ─────────────────────────────────────────────
 async function getCachedReport(matchNumber: string): Promise<string | null> {
   if (matchCache[matchNumber]) return matchCache[matchNumber];
-  const path = `reports/${matchNumber}`;
+  const path = `seasons/${SEASON.id}/reports/${matchNumber}`;
   try {
-    const snap = await getDoc(doc(db, "reports", matchNumber));
+    const snap = await getDoc(doc(db, "seasons", SEASON.id, "reports", matchNumber));
     if (snap.exists()) {
       const content = snap.data().content;
       matchCache[matchNumber] = content;
@@ -413,9 +417,9 @@ export async function saveReport(matchNumber: string, content: string) {
   matchCache[matchNumber] = content;
   if (!auth.currentUser) return;
   
-  const path = `reports/${matchNumber}`;
+  const path = `seasons/${SEASON.id}/reports/${matchNumber}`;
   try {
-    await setDoc(doc(db, "reports", matchNumber), {
+    await setDoc(doc(db, "seasons", SEASON.id, "reports", matchNumber), {
       matchNumber,
       content,
       generatedAt: new Date().toISOString(),
@@ -432,9 +436,9 @@ async function getMatchData(
   matchNumber: string
 ): Promise<Partial<MatchReference>> {
   const staticData: Partial<MatchReference> = SEASON_MATCHES[matchNumber] || {};
-  const path = `matches/${matchNumber}`;
+  const path = `seasons/${SEASON.id}/matches/${matchNumber}`;
   try {
-    const snap = await getDoc(doc(db, "matches", matchNumber));
+    const snap = await getDoc(doc(db, "seasons", SEASON.id, "matches", matchNumber));
     if (snap.exists()) {
       const dbData = snap.data() as Partial<MatchReference>;
 
@@ -477,7 +481,7 @@ async function extractMatchData(
   onStatusUpdate?.(`Rufe Spielseite auf: ${mainUrl}`);
 
   const prompt = `
-    KONTEXT: Sparda 2. Liga Pro Frauen, Saison 2025/26
+    KONTEXT: Sparda 2. Liga Pro Frauen, Saison ${SEASON.label}
     SPIELNUMMER: ${matchNumber}
     MATCH-ID: ${matchId} (9-stellig – NICHT die Spielnummer!)
     HAUPT-URL: ${mainUrl}
@@ -511,7 +515,7 @@ async function extractMatchData(
        - Diese stehen oft ganz oben auf der Seite oder direkt unter der Hauptüberschrift (H2).
        - Suche nach Mustern wie "Wochentag, DD.MM.YYYY um HH:MM Uhr".
        - Format: date="DD.MM.YYYY", time="HH:MM", weekday="Wochentag"
-       - WICHTIG: Falls das Jahr fehlt, ergänze "2026" (Saison 2025/26).
+       - WICHTIG: Falls das Jahr fehlt, ergänze das Jahr passend zur Saison ${SEASON.label}: Spiele von August bis Dezember = ${SEASON.yearFirst}, Januar bis Mai = ${SEASON.yearSecond}.
     
     2. SPIELERGEBNIS (Zeile 2):
        - Heimteam, Gastteam, Satzstand (z.B. 3:0), Gesamtpunkte (z.B. 75:58), Satzpunkte (z.B. 25:18, 25:19, 25:21)
@@ -555,11 +559,13 @@ async function extractMatchData(
        - Die teamId ist meist 9-stellig (z.B. 776308823). Sie beginnt meist mit 776.
     
     8. YOUTUBE Re-Live (Zeile 10):
+       - Pro Spieltag ist nur EIN Spiel frei auf YouTube verfügbar, alle anderen Spiele laufen ausschließlich bei DYN (kostenpflichtig).
+       - Fehlt ein passendes Video, ist das normal: youtubeUrl dann leer lassen ("") – NICHT raten und kein anderes Spiel verlinken.
        ${knownData.youtubeUrl && !forceRefresh
          ? `Nutze aus DB: ${knownData.youtubeUrl}`
          : `Suche in Playlist: ${YOUTUBE_PLAYLIST_URL}
             Der Video-Titel MUSS die Spielnummer ${matchNumber} ODER beide Teamnamen (${knownData.homeTeam || ""} vs ${knownData.awayTeam || ""}) enthalten.
-            Fallback: Suche auf YouTube nach "VBL Volleyball Spiel ${matchNumber} 2025/26"`
+            Fallback: Suche auf YouTube nach "VBL Volleyball Spiel ${matchNumber} ${SEASON.label}"`
        }
     
     WICHTIGE REGELN:
@@ -653,10 +659,10 @@ try {
 // ─────────────────────────────────────────────
 export async function deleteMatchEntry(matchNumber: string): Promise<void> {
   if (!auth.currentUser) throw new Error("Nicht authentifiziert.");
-  const path = `matches/${matchNumber}`;
+  const path = `seasons/${SEASON.id}/matches/${matchNumber}`;
   try {
-    await deleteDoc(doc(db, "matches", matchNumber));
-    await deleteDoc(doc(db, "reports", matchNumber));
+    await deleteDoc(doc(db, "seasons", SEASON.id, "matches", matchNumber));
+    await deleteDoc(doc(db, "seasons", SEASON.id, "reports", matchNumber));
     delete matchCache[matchNumber];
   } catch (e) {
     handleFirestoreError(e, OperationType.DELETE, path);
@@ -710,7 +716,9 @@ export function buildReport(
     `[VBL-Ticker](${tickerUrl})`,
     `MVP [${data.homeTeam || "Heim"}](${homeTeamUrl}): [${data.mvpHomeName || "Unbekannt"}](${mvpHomeUrl})`,
     `MVP [${data.awayTeam || "Gast"}](${awayTeamUrl}): [${data.mvpAwayName || "Unbekannt"}](${mvpAwayUrl})`,
-    `[Re-Live DYN Volleyball YouTube (kostenfrei)](${data.youtubeUrl || YOUTUBE_PLAYLIST_URL})`,
+    data.youtubeUrl
+      ? `[Re-Live YouTube (kostenfrei)](${data.youtubeUrl})`
+      : `[Re-Live DYN Volleyball](${DYN_URL})`,
   ];
 
   return lines.join("\n\n");
@@ -960,7 +968,7 @@ export async function saveMatchData(
   const matchPath = `matches/${matchNumber}`;
   try {
     await setDoc(
-      doc(db, "matches", matchNumber),
+      doc(db, "seasons", SEASON.id, "matches", matchNumber),
       { ...clean, updatedAt: new Date().toISOString() },
       { merge: true }
     );
